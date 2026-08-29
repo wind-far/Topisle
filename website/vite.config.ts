@@ -44,6 +44,16 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
+    // Vinext discovers application entries itself. Keep Vite's dependency scan
+    // away from declaration files: Rolldown parses `.d.ts` as executable input
+    // in dev mode, which aborts pre-bundling and can load a second React copy.
+    optimizeDeps: {
+      noDiscovery: true,
+      include: ["react", "react-dom", "framer-motion", "ogl"],
+    },
+    resolve: {
+      dedupe: ["react", "react-dom"],
+    },
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,
