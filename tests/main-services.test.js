@@ -1,5 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const {
   isPrivateAddress,
@@ -17,7 +20,142 @@ const {
   controlSodaMusic,
   sodaShortcutSpec,
   selectTranscriptionSettings,
+  isAllowedLocalEntryNavigation,
+  validateWorkspaceEnvelope,
+  inspectWorkspaceTarget,
+  copyWorkspaceAssets,
+  workspacePathsMatch,
+  writeWorkspaceEnvelope,
+  saveWorkspaceSnapshot,
 } = require('../main-services');
+
+function temporaryWorkspaceTree(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'todo-panel-workspace-test-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  return root;
+}
+
+test('local window navigation allows only an exact reload of its fixed file entry', () => {
+  const entry = path.resolve('/Applications/Topisle/renderer/index.html');
+  const entryUrl = new URL(`file://${entry}`).toString();
+  assert.equal(isAllowedLocalEntryNavigation(entryUrl, entry), true);
+  assert.equal(isAllowedLocalEntryNavigation(`${entryUrl}?redirect=1`, entry), false);
+  assert.equal(isAllowedLocalEntryNavigation('https://example.com/', entry), false);
+  assert.equal(isAllowedLocalEntryNavigation('file:///tmp/other.html', entry), false);
+});
+
+test('workspace envelope validation requires version 1 and string-only localStorage', () => {
+  assert.deepEqual(validateWorkspaceEnvelope({ version: 1, localStorage: { todo: '[]' } }), {
+    ok: true,
+    value: { version: 1, localStorage: { todo: '[]' } },
+  });
+  assert.equal(validateWorkspaceEnvelope({ version: 2, localStorage: {} }).error, 'unsupported_workspace_version');
+  assert.equal(validateWorkspaceEnvelope({ version: 1 }).error, 'invalid_workspace_storage');
+  assert.equal(validateWorkspaceEnvelope({ version: 1, localStorage: { bad: 42 } }).error, 'invalid_workspace_storage');
+});
+
+test('existing workspace is validated in a real temporary directory without being changed', (t) => {
+  const root = temporaryWorkspaceTree(t);
+  const workspaceFile = path.join(root, 'workspace.json');
+  const source = JSON.stringify({ version: 1, localStorage: { todo: '[{"id":"target"}]' } }, null, 2);
+  fs.writeFileSync(workspaceFile, source);
+  const inspected = inspectWorkspaceTarget(root);
+  assert.equal(inspected.ok, true);
+  assert.equal(inspected.kind, 'existing');
+  assert.deepEqual(inspected.envelope.localStorage, { todo: '[{"id":"target"}]' });
+  assert.equal(fs.readFileSync(workspaceFile, 'utf8'), source);
+});
+
+test('empty workspace directory receives a validated migration in a real temporary tree', (t) => {
+  const root = temporaryWorkspaceTree(t);
+  const sourceRoot = path.join(root, 'source');
+  const targetRoot = path.join(root, 'target');
+  fs.mkdirSync(path.join(sourceRoot, 'recordings'), { recursive: true });
+  fs.mkdirSync(targetRoot, { recursive: true });
+  fs.writeFileSync(path.join(sourceRoot, 'workspace.json'), JSON.stringify({
+    version: 1,
+    localStorage: { todo: '[{"id":"source"}]' },
+  }));
+  fs.writeFileSync(path.join(sourceRoot, 'recordings', 'recording-a.webm'), 'audio');
+  assert.equal(inspectWorkspaceTarget(targetRoot).kind, 'empty');
+  assert.equal(copyWorkspaceAssets(sourceRoot, targetRoot, {
+    directories: ['recordings'],
+    files: ['workspace.json'],
+  }), true);
+  assert.equal(inspectWorkspaceTarget(targetRoot).kind, 'existing');
+  assert.equal(fs.readFileSync(path.join(targetRoot, 'recordings', 'recording-a.webm'), 'utf8'), 'audio');
+});
+
+test('corrupt workspace is rejected without modification', (t) => {
+  const root = temporaryWorkspaceTree(t);
+  const workspaceFile = path.join(root, 'workspace.json');
+  const corrupt = '{"version":1,"localStorage":';
+  fs.writeFileSync(workspaceFile, corrupt);
+  const inspected = inspectWorkspaceTarget(root);
+  assert.equal(inspected.ok, false);
+  assert.equal(inspected.error, 'invalid_workspace_json');
+  assert.equal(fs.readFileSync(workspaceFile, 'utf8'), corrupt);
+});
+
+test('saving a snapshot refuses to overwrite a corrupt or future current workspace', (t) => {
+  const root = temporaryWorkspaceTree(t);
+  const workspaceFile = path.join(root, 'workspace.json');
+  for (const source of [
+    '{"version":1,"localStorage":',
+    JSON.stringify({ version: 2, localStorage: { future: 'keep' } }),
+  ]) {
+    fs.writeFileSync(workspaceFile, source);
+    const saved = saveWorkspaceSnapshot(root, root, { current: 'must-not-write' }, { updatedAt: 123 });
+    assert.equal(saved.ok, false);
+    assert.equal(fs.readFileSync(workspaceFile, 'utf8'), source);
+  }
+});
+
+test('first-run snapshot creates the source envelope before empty-directory migration', (t) => {
+  const root = temporaryWorkspaceTree(t);
+  const sourceRoot = path.join(root, 'source');
+  const targetRoot = path.join(root, 'target');
+  fs.mkdirSync(sourceRoot);
+  fs.mkdirSync(targetRoot);
+  assert.equal(inspectWorkspaceTarget(sourceRoot).kind, 'empty');
+  assert.deepEqual(saveWorkspaceSnapshot(sourceRoot, sourceRoot, {
+    'notch-todo-data': '[{"id":"first-run"}]',
+  }, { updatedAt: 123 }), { ok: true, kind: 'empty' });
+  assert.equal(copyWorkspaceAssets(sourceRoot, targetRoot, { files: ['workspace.json'] }), true);
+  const migrated = inspectWorkspaceTarget(targetRoot);
+  assert.equal(migrated.ok, true);
+  assert.equal(migrated.kind, 'existing');
+  assert.equal(migrated.envelope.localStorage['notch-todo-data'], '[{"id":"first-run"}]');
+});
+
+test('stale expected workspace paths cannot match the active root', (t) => {
+  const root = temporaryWorkspaceTree(t);
+  const previous = path.join(root, 'previous');
+  const active = path.join(root, 'active');
+  fs.mkdirSync(previous);
+  fs.mkdirSync(active);
+  const activeFile = path.join(active, 'workspace.json');
+  const original = JSON.stringify({ version: 1, localStorage: { target: 'keep' } });
+  fs.writeFileSync(activeFile, original);
+  assert.equal(workspacePathsMatch(previous, active), false);
+  assert.equal(workspacePathsMatch(active, path.join(active, '.')), true);
+  assert.equal(workspacePathsMatch('', active), false);
+  assert.equal(writeWorkspaceEnvelope(previous, active, {
+    version: 1,
+    localStorage: { stale: 'must not write' },
+  }), false);
+  assert.equal(fs.readFileSync(activeFile, 'utf8'), original);
+  assert.equal(writeWorkspaceEnvelope(active, active, {
+    version: 1,
+    updatedAt: 123,
+    localStorage: { current: 'saved' },
+  }), true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(activeFile, 'utf8')), {
+    version: 1,
+    updatedAt: 123,
+    localStorage: { current: 'saved' },
+  });
+});
 
 test('isPrivateAddress blocks loopback, private, link-local and unique-local ranges', () => {
   for (const address of ['127.0.0.1', '10.2.3.4', '172.16.2.3', '192.168.1.9', '169.254.1.1', '::1', 'fc00::1', 'fe80::1']) {

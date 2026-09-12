@@ -1,7 +1,7 @@
 import { assetPath } from "./assetPath.mjs";
 
-export const DOWNLOAD_URL = "https://github.com/xiaopu-ai/TO-DO-Panel/releases/latest";
-export const GITHUB_URL = "https://github.com/xiaopu-ai/TO-DO-Panel";
+export const DOWNLOAD_URL = "https://github.com/wind-far/Topisle/releases/latest";
+export const GITHUB_URL = "https://github.com/wind-far/Topisle";
 
 export type MediaKind = "image" | "video";
 
@@ -31,12 +31,12 @@ export const NAV_ITEMS = [
 ] as const;
 
 export const MARQUEE_ITEMS: MediaItem[] = [
-  { id: "todo", src: assetPath("/product-captures/todo.webp"), fallbackSrc: "", kind: "image", alt: "TO-DO Panel 待办完整面板" },
-  { id: "clipboard", src: assetPath("/product-captures/clipboard.webp"), fallbackSrc: "", kind: "image", alt: "TO-DO Panel 剪贴完整面板" },
-  { id: "notes", src: assetPath("/product-captures/notes.webp"), fallbackSrc: "", kind: "image", alt: "TO-DO Panel 笔记完整面板" },
-  { id: "links", src: assetPath("/product-captures/links.webp"), fallbackSrc: "", kind: "image", alt: "TO-DO Panel 链接完整面板" },
-  { id: "recordings", src: assetPath("/product-captures/recordings.webp"), fallbackSrc: "", kind: "image", alt: "TO-DO Panel 录制完整面板" },
-  { id: "credentials", src: assetPath("/product-captures/credentials.webp"), fallbackSrc: "", kind: "image", alt: "TO-DO Panel 密钥完整面板" },
+  { id: "todo", src: assetPath("/product-captures/todo.webp"), fallbackSrc: "", kind: "image", alt: "Topisle 待办完整面板" },
+  { id: "clipboard", src: assetPath("/product-captures/clipboard.webp"), fallbackSrc: "", kind: "image", alt: "Topisle 剪贴完整面板" },
+  { id: "notes", src: assetPath("/product-captures/notes.webp"), fallbackSrc: "", kind: "image", alt: "Topisle 笔记完整面板" },
+  { id: "links", src: assetPath("/product-captures/links.webp"), fallbackSrc: "", kind: "image", alt: "Topisle 链接完整面板" },
+  { id: "recordings", src: assetPath("/product-captures/recordings.webp"), fallbackSrc: "", kind: "image", alt: "Topisle 录制完整面板" },
+  { id: "credentials", src: assetPath("/product-captures/credentials.webp"), fallbackSrc: "", kind: "image", alt: "Topisle 密钥完整面板" },
 ];
 
 export const CAPABILITIES = [

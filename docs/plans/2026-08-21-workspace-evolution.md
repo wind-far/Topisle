@@ -1,8 +1,8 @@
-# NotchTodo Workspace Evolution Implementation Plan
+# Topisle Workspace Evolution Implementation Plan
 
 > **For Codex:** REQUIRED SUB-SKILL: Use test-driven development while executing this plan task-by-task.
 
-**Goal:** 将 NotchTodo 从“待办 + 剪贴板 + 应用坞”升级为围绕指令、链接、录音转写、当前窗口与 AI 完成提醒的本地工作台，同时保留但隐藏剪贴板能力。
+**Goal:** 将 Topisle 从“待办 + 剪贴板 + 应用坞”升级为围绕指令、链接、录音转写、当前窗口与 AI 完成提醒的本地工作台，同时保留但隐藏剪贴板能力。
 
 **Architecture:** 保持 Electron 主进程、contextBridge 与原生渲染层的现有边界。新增纯函数领域模块负责 URL、链接分组、录音元数据与任务匹配；主进程负责受控网络读取、macOS 窗口自动化和录音文件 I/O；渲染层负责五个可见 Tab 与 LocalStorage 元数据。
 

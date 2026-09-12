@@ -4,6 +4,7 @@
 
   const COMMANDS_KEY = 'notch-home-commands';
   const LINKS_KEY = 'notch-link-groups';
+  const NOTE_ARCHIVE_KEY = 'notch-note-archive-v1';
   const RECORDINGS_KEY = 'notch-recordings';
   const HIDDEN_WINDOWS_KEY = 'notch-hidden-windows';
 
@@ -265,7 +266,7 @@
     if (!linkGroups.length) {
       const empty = document.createElement('div');
       empty.className = 'links-empty';
-      empty.innerHTML = '<strong>还没有链接</strong><span>粘贴一个网址，TO-DO Panel 会读取标题并放进合适的分组。</span>';
+      empty.innerHTML = '<strong>还没有链接</strong><span>粘贴一个网址，Topisle 会读取标题并放进合适的分组。</span>';
       linkGroupsEl.appendChild(empty);
       return;
     }
@@ -736,6 +737,35 @@
   const settingsWorkspaceChoose = document.getElementById('settings-workspace-choose');
   const settingsAutoLaunch = document.getElementById('settings-auto-launch');
   const settingsInlineNote = document.getElementById('settings-inline-note');
+  const homeWidgetManage = document.getElementById('home-widget-manage');
+  const homeLayoutHint = document.getElementById('home-layout-hint');
+  const homeLayoutHintClose = document.getElementById('home-layout-hint-close');
+  const settingsWidgetAdd = document.getElementById('settings-widget-add');
+  const settingsWidgetCount = document.getElementById('settings-widget-count');
+  const settingsWidgetList = document.getElementById('settings-widget-list');
+  const settingsWidgetEmpty = document.getElementById('settings-widget-empty');
+  const settingsWidgetOrderStatus = document.getElementById('settings-widget-order-status');
+  const widgetEditorBackdrop = document.getElementById('widget-editor-backdrop');
+  const widgetEditorForm = document.getElementById('widget-editor-form');
+  const widgetEditorTitle = document.getElementById('widget-editor-title');
+  const widgetEditorClose = document.getElementById('widget-editor-close');
+  const widgetEditorCancel = document.getElementById('widget-editor-cancel');
+  const widgetEditorId = document.getElementById('widget-editor-id');
+  const widgetEditorType = document.getElementById('widget-editor-type');
+  const widgetEditorSize = document.getElementById('widget-editor-size');
+  const widgetEditorName = document.getElementById('widget-editor-name');
+  const widgetEditorContent = document.getElementById('widget-editor-content');
+  const widgetEditorTarget = document.getElementById('widget-editor-target');
+  const widgetEditorLinksList = document.getElementById('widget-editor-links-list');
+  const widgetEditorLinksCount = document.getElementById('widget-editor-links-count');
+  const widgetEditorLinkAdd = document.getElementById('widget-editor-link-add');
+  const widgetEditorTodayTodosLimit = document.getElementById('widget-editor-today-todos-limit');
+  const widgetEditorTodayTodosOverdue = document.getElementById('widget-editor-today-todos-overdue');
+  const widgetEditorRecentNoteId = document.getElementById('widget-editor-recent-note-id');
+  const widgetEditorRecentNoteExcerpt = document.getElementById('widget-editor-recent-note-excerpt');
+  const widgetEditorLinkGroupId = document.getElementById('widget-editor-link-group-id');
+  const widgetEditorLinkGroupLimit = document.getElementById('widget-editor-link-group-limit');
+  const widgetEditorNote = document.getElementById('widget-editor-note');
 
   let recordings = loadJson(RECORDINGS_KEY, []).map(Domain.createRecording).filter(Boolean);
   let selectedRecordingId = recordings[0] && recordings[0].id;
@@ -770,6 +800,13 @@
   };
   let settingsAppSettings = null;
   let settingsWorkspace = null;
+  let settingsWidgets = [];
+  let settingsWidgetDefinitions = {};
+  let widgetEditorReturnFocus = null;
+  let pendingWidgetFocus = null;
+  let pendingRestoredWidgetFocusId = '';
+  let pendingRestoredWidgetFocusTimer = null;
+  let homeLayoutHintTimer = null;
   let transcriptionStatus = 'idle';
   let transcriptionStartPromise = null;
   let transcriptionAudioContext = null;
@@ -915,6 +952,478 @@
     settingsInlineNote.classList.toggle('error', error);
   }
 
+  function workspaceChooseErrorMessage(error, reason = '') {
+    if (error === 'workspace_flush_failed') {
+      if (reason === 'unsupported_workspace_version') {
+        return '当前工作区来自更新版本，为保护原数据已停止切换。';
+      }
+      if (['invalid_workspace_file', 'invalid_workspace_json', 'invalid_workspace_storage'].includes(reason)) {
+        return '当前工作区数据损坏，为保护原数据已停止切换。';
+      }
+      return '当前工作区保存失败，未打开文件夹选择器。';
+    }
+    if (['invalid_workspace_file', 'invalid_workspace_json', 'invalid_workspace_storage'].includes(error)) {
+      return '所选工作区数据文件损坏或格式无效，未切换。';
+    }
+    if (error === 'unsupported_workspace_version') {
+      return '所选工作区数据版本不兼容，未切换。';
+    }
+    if (error === 'workspace_unreadable') {
+      return '无法读取所选工作区，请检查文件夹权限后重试。';
+    }
+    if (error === 'stale_workspace_path') {
+      return '当前工作区已发生变化，请重试。';
+    }
+    if (error === 'workspace_too_large') {
+      return '当前工作区数据过大，未执行切换。';
+    }
+    if (['workspace_migration_failed', 'workspace_settings_save_failed', 'workspace_write_failed'].includes(error)) {
+      return '工作区切换失败，原数据位置未改变。';
+    }
+    return error ? '工作区切换失败，请稍后重试。' : '';
+  }
+
+  const CUSTOM_WIDGET_TYPES = new Set(['text', 'countdown', 'links', 'todayTodos', 'recentNote', 'linkGroup']);
+  const CUSTOM_WIDGET_TYPE_LABELS = {
+    text: '文本卡片',
+    countdown: '倒计时',
+    links: '快捷链接',
+    todayTodos: '今日待办',
+    recentNote: '最近笔记',
+    linkGroup: '链接分组',
+  };
+  const CUSTOM_WIDGET_SIZE_LABELS = {
+    mini: '迷你',
+    small: '小',
+    medium: '中',
+    large: '大',
+  };
+  const MAX_CUSTOM_WIDGETS = 8;
+  const MAX_WIDGET_LINKS = 12;
+  const HOME_LAYOUT_HINT_KEY = 'notch-home-layout-hint-seen-v1';
+
+  function announceWidgetOrder(message) {
+    if (!settingsWidgetOrderStatus) return;
+    settingsWidgetOrderStatus.textContent = '';
+    requestAnimationFrame(() => { settingsWidgetOrderStatus.textContent = message; });
+  }
+
+  function dismissHomeLayoutHint() {
+    if (homeLayoutHintTimer) clearTimeout(homeLayoutHintTimer);
+    homeLayoutHintTimer = null;
+    if (homeLayoutHint) homeLayoutHint.hidden = true;
+  }
+
+  function maybeShowHomeLayoutHint() {
+    if (!homeLayoutHint || !workspaceExpanded || workspaceTab !== 'home') return;
+    if (localStorage.getItem(HOME_LAYOUT_HINT_KEY) === '1') return;
+    localStorage.setItem(HOME_LAYOUT_HINT_KEY, '1');
+    homeLayoutHint.hidden = false;
+    homeLayoutHintTimer = setTimeout(dismissHomeLayoutHint, 7000);
+  }
+
+  function widgetDefinition(type) {
+    if (Array.isArray(settingsWidgetDefinitions)) {
+      const definition = settingsWidgetDefinitions.find((item) => item?.type === type || item?.id === type);
+      if (definition) return definition;
+    }
+    return settingsWidgetDefinitions?.[type]
+      || window.NotchWidgetRegistry?.getWidgetDefinition?.(type)
+      || null;
+  }
+
+  function renderSettingsWidgets() {
+    if (!settingsWidgetList) return;
+    settingsWidgetList.replaceChildren();
+    const widgets = settingsWidgets.filter((widget) => widget && CUSTOM_WIDGET_TYPES.has(widget.type));
+    if (settingsWidgetCount) settingsWidgetCount.textContent = `${widgets.length} / ${MAX_CUSTOM_WIDGETS}`;
+    if (settingsWidgetAdd) {
+      settingsWidgetAdd.disabled = widgets.length >= MAX_CUSTOM_WIDGETS;
+      settingsWidgetAdd.title = widgets.length >= MAX_CUSTOM_WIDGETS ? '已达到 8 个组件上限' : '';
+    }
+    if (!widgets.length) {
+      if (settingsWidgetEmpty) settingsWidgetList.append(settingsWidgetEmpty);
+      return;
+    }
+    widgets.forEach((widget, index) => {
+      const definition = widgetDefinition(widget.type);
+      const row = document.createElement('article');
+      row.className = 'settings-widget-item';
+      row.dataset.widgetId = widget.id;
+      row.setAttribute('role', 'listitem');
+
+      const copy = document.createElement('div');
+      copy.className = 'settings-widget-copy';
+      const title = document.createElement('strong');
+      title.textContent = widget.title || definition?.label || CUSTOM_WIDGET_TYPE_LABELS[widget.type];
+      const meta = document.createElement('small');
+      const typeLabel = definition?.label || CUSTOM_WIDGET_TYPE_LABELS[widget.type];
+      const sizeLabel = CUSTOM_WIDGET_SIZE_LABELS[widget.size] || CUSTOM_WIDGET_SIZE_LABELS.medium;
+      meta.textContent = `${typeLabel} · ${sizeLabel}`;
+      copy.append(title, meta);
+
+      const toggle = document.createElement('label');
+      toggle.className = 'settings-widget-toggle';
+      const toggleInput = document.createElement('input');
+      toggleInput.type = 'checkbox';
+      toggleInput.checked = widget.enabled !== false;
+      toggleInput.dataset.widgetToggle = widget.id;
+      toggleInput.setAttribute('aria-label', `${toggleInput.checked ? '隐藏' : '显示'}组件「${title.textContent}」`);
+      const toggleTrack = document.createElement('i');
+      toggleTrack.setAttribute('aria-hidden', 'true');
+      toggle.append(toggleInput, toggleTrack);
+
+      const actions = document.createElement('div');
+      actions.className = 'settings-widget-actions';
+      const previous = document.createElement('button');
+      previous.type = 'button';
+      previous.dataset.widgetMove = 'previous';
+      previous.disabled = index === 0;
+      previous.textContent = '↑';
+      previous.setAttribute('aria-label', `在首页前移组件「${title.textContent}」`);
+      const next = document.createElement('button');
+      next.type = 'button';
+      next.dataset.widgetMove = 'next';
+      next.disabled = index === widgets.length - 1;
+      next.textContent = '↓';
+      next.setAttribute('aria-label', `在首页后移组件「${title.textContent}」`);
+      const edit = document.createElement('button');
+      edit.type = 'button';
+      edit.dataset.widgetEdit = widget.id;
+      edit.setAttribute('aria-label', `编辑组件「${title.textContent}」`);
+      edit.innerHTML = EDIT_ICON;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.dataset.widgetDelete = widget.id;
+      remove.setAttribute('aria-label', `删除组件「${title.textContent}」`);
+      remove.innerHTML = DELETE_ICON;
+      actions.append(previous, next, edit, remove);
+      row.append(copy, toggle, actions);
+      settingsWidgetList.append(row);
+    });
+    const focusRequest = pendingWidgetFocus
+      || (pendingRestoredWidgetFocusId && widgets.some((widget) => widget.id === pendingRestoredWidgetFocusId)
+        ? { id: pendingRestoredWidgetFocusId, selector: '[data-widget-edit]' }
+        : null);
+    if (focusRequest) {
+      pendingWidgetFocus = null;
+      if (focusRequest.id === pendingRestoredWidgetFocusId) {
+        pendingRestoredWidgetFocusId = '';
+        if (pendingRestoredWidgetFocusTimer) clearTimeout(pendingRestoredWidgetFocusTimer);
+        pendingRestoredWidgetFocusTimer = null;
+      }
+      setTimeout(() => {
+        const row = settingsWidgetList.querySelector(`[data-widget-id="${CSS.escape(focusRequest.id)}"]`);
+        row?.querySelector(focusRequest.selector)?.focus();
+      }, 0);
+    }
+  }
+
+  function updateWidgetLinkControls() {
+    if (!widgetEditorLinksList) return;
+    const rows = Array.from(widgetEditorLinksList.querySelectorAll('[data-widget-link-row]'));
+    const active = !document.getElementById('widget-editor-link-fields')?.hidden;
+    rows.forEach((row, index) => {
+      const up = row.querySelector('[data-widget-link-move="up"]');
+      const down = row.querySelector('[data-widget-link-move="down"]');
+      const remove = row.querySelector('[data-widget-link-remove]');
+      row.querySelector('[data-widget-link-label]')?.setAttribute('aria-label', `第 ${index + 1} 个链接名称`);
+      row.querySelector('[data-widget-link-url]')?.setAttribute('aria-label', `第 ${index + 1} 个链接地址`);
+      up?.setAttribute('aria-label', `上移第 ${index + 1} 个链接`);
+      down?.setAttribute('aria-label', `下移第 ${index + 1} 个链接`);
+      remove?.setAttribute('aria-label', `删除第 ${index + 1} 个链接`);
+      if (up) up.disabled = !active || index === 0;
+      if (down) down.disabled = !active || index === rows.length - 1;
+      if (remove) remove.disabled = !active || rows.length === 1;
+      row.querySelectorAll('input').forEach((input) => { input.disabled = !active; });
+    });
+    if (widgetEditorLinksCount) widgetEditorLinksCount.textContent = `${rows.length} / ${MAX_WIDGET_LINKS}`;
+    if (widgetEditorLinkAdd) widgetEditorLinkAdd.disabled = !active || rows.length >= MAX_WIDGET_LINKS;
+  }
+
+  function createWidgetLinkRow(item = {}, index = 0) {
+    const row = document.createElement('div');
+    row.className = 'widget-editor-link-row';
+    row.dataset.widgetLinkRow = '';
+    row.setAttribute('role', 'listitem');
+
+    const fields = document.createElement('div');
+    fields.className = 'widget-editor-link-fields';
+    const label = document.createElement('input');
+    label.type = 'text';
+    label.maxLength = 80;
+    label.value = item.label || '';
+    label.placeholder = '链接名称（默认使用组件标题）';
+    label.autocomplete = 'off';
+    label.dataset.widgetLinkLabel = '';
+    label.setAttribute('aria-label', `第 ${index + 1} 个链接名称`);
+    const url = document.createElement('input');
+    // 与注册表一致，允许用户输入 example.com，再统一补全为 https://。
+    url.type = 'text';
+    url.maxLength = 2048;
+    url.value = item.url || '';
+    url.placeholder = 'https://example.com';
+    url.autocomplete = 'off';
+    url.spellcheck = false;
+    url.required = true;
+    url.inputMode = 'url';
+    url.dataset.widgetLinkUrl = '';
+    url.setAttribute('aria-label', `第 ${index + 1} 个链接地址`);
+    fields.append(label, url);
+
+    const actions = document.createElement('div');
+    actions.className = 'widget-editor-link-actions';
+    const up = document.createElement('button');
+    up.type = 'button';
+    up.dataset.widgetLinkMove = 'up';
+    up.textContent = '↑';
+    up.setAttribute('aria-label', `上移第 ${index + 1} 个链接`);
+    const down = document.createElement('button');
+    down.type = 'button';
+    down.dataset.widgetLinkMove = 'down';
+    down.textContent = '↓';
+    down.setAttribute('aria-label', `下移第 ${index + 1} 个链接`);
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.dataset.widgetLinkRemove = '';
+    remove.textContent = '×';
+    remove.setAttribute('aria-label', `删除第 ${index + 1} 个链接`);
+    actions.append(up, down, remove);
+    row.append(fields, actions);
+    return row;
+  }
+
+  function renderWidgetLinkEditor(items = []) {
+    if (!widgetEditorLinksList) return;
+    const safeItems = Array.isArray(items) && items.length ? items.slice(0, MAX_WIDGET_LINKS) : [{}];
+    widgetEditorLinksList.replaceChildren(...safeItems.map(createWidgetLinkRow));
+    updateWidgetLinkControls();
+  }
+
+  function readWidgetLinkEditor() {
+    if (!widgetEditorLinksList) return [];
+    return Array.from(widgetEditorLinksList.querySelectorAll('[data-widget-link-row]')).map((row) => ({
+      label: row.querySelector('[data-widget-link-label]')?.value.trim()
+        || widgetEditorName?.value.trim()
+        || '打开链接',
+      url: row.querySelector('[data-widget-link-url]')?.value.trim() || '',
+    }));
+  }
+
+  function createWidgetDataOption(value, label, disabled = false) {
+    const option = document.createElement('option');
+    option.value = String(value || '');
+    option.textContent = String(label || '未命名').slice(0, 96);
+    option.disabled = disabled;
+    return option;
+  }
+
+  function refreshWidgetDataOptions(config = {}) {
+    if (widgetEditorRecentNoteId) {
+      const rawNotes = loadJson(NOTE_ARCHIVE_KEY, []);
+      const notes = typeof Domain.normalizeNoteArchive === 'function'
+        ? Domain.normalizeNoteArchive(rawNotes)
+        : (Array.isArray(rawNotes) ? rawNotes : []);
+      const desiredNoteId = String(config.noteId || '');
+      const options = [createWidgetDataOption('', '最近一篇（自动更新）')];
+      notes.forEach((note) => {
+        if (!note?.id) return;
+        options.push(createWidgetDataOption(note.id, String(note.title || '').trim() || '未命名笔记'));
+      });
+      const missingNote = Boolean(desiredNoteId && !notes.some((note) => note?.id === desiredNoteId));
+      if (missingNote) options.push(createWidgetDataOption(desiredNoteId, '原笔记已不存在', true));
+      widgetEditorRecentNoteId.replaceChildren(...options);
+      widgetEditorRecentNoteId.value = desiredNoteId;
+      widgetEditorRecentNoteId.dataset.empty = String(notes.length === 0);
+      widgetEditorRecentNoteId.dataset.missingReference = String(missingNote);
+    }
+
+    if (widgetEditorLinkGroupId) {
+      const groups = loadJson(LINKS_KEY, []);
+      const safeGroups = Array.isArray(groups) ? groups.filter((group) => group?.id) : [];
+      const desiredGroupId = String(config.groupId || '');
+      const options = safeGroups.map((group) => createWidgetDataOption(
+        group.id,
+        String(group.name || '').trim() || '未命名分组'
+      ));
+      const missingGroup = Boolean(desiredGroupId && !safeGroups.some((group) => group.id === desiredGroupId));
+      if (missingGroup) options.push(createWidgetDataOption(desiredGroupId, '原链接分组已不存在', true));
+      if (!options.length) options.push(createWidgetDataOption('', '暂无链接分组', true));
+      widgetEditorLinkGroupId.replaceChildren(...options);
+      widgetEditorLinkGroupId.value = desiredGroupId || safeGroups[0]?.id || '';
+      widgetEditorLinkGroupId.dataset.empty = String(safeGroups.length === 0);
+      widgetEditorLinkGroupId.dataset.missingReference = String(missingGroup);
+    }
+  }
+
+  function widgetEditorGuidance(type) {
+    if (type === 'recentNote') {
+      if (widgetEditorRecentNoteId?.dataset.missingReference === 'true') {
+        return { message: '原笔记已不存在；请选择“最近一篇”或另一篇笔记后保存。', error: true };
+      }
+      if (widgetEditorRecentNoteId?.dataset.empty === 'true') {
+        return { message: '当前没有已保存笔记；组件会保持空状态，保存笔记后自动显示。', error: false };
+      }
+      return { message: '仅保存笔记 ID；正文始终从本机笔记库读取。', error: false };
+    }
+    if (type === 'linkGroup') {
+      if (widgetEditorLinkGroupId?.dataset.missingReference === 'true') {
+        return { message: '原链接分组已不存在；请选择其他分组后保存。', error: true };
+      }
+      if (widgetEditorLinkGroupId?.dataset.empty === 'true') {
+        return { message: '暂无可选链接分组，请先在“链接”页创建分组。', error: true };
+      }
+      return { message: '仅保存分组 ID；链接内容始终从本机链接库读取。', error: false };
+    }
+    if (type === 'todayTodos') {
+      return { message: '待办内容始终从本机待办列表读取，不会复制到组件配置。', error: false };
+    }
+    return { message: '不支持输入或执行 HTML、JavaScript。', error: false };
+  }
+
+  function setWidgetEditorType(type) {
+    const selectedType = CUSTOM_WIDGET_TYPES.has(type) ? type : 'text';
+    if (widgetEditorType) widgetEditorType.value = selectedType;
+    document.querySelectorAll('[data-widget-fields]').forEach((section) => {
+      const active = section.dataset.widgetFields === selectedType;
+      section.hidden = !active;
+      section.querySelectorAll('input, textarea, select, button').forEach((field) => {
+        field.disabled = !active;
+      });
+    });
+    const definition = widgetDefinition(selectedType);
+    const allowedSizes = new Set(definition?.allowedSizes || ['mini', 'small', 'medium', 'large']);
+    widgetEditorSize?.querySelectorAll('option').forEach((option) => {
+      option.disabled = !allowedSizes.has(option.value);
+    });
+    if (widgetEditorSize && !allowedSizes.has(widgetEditorSize.value)) {
+      widgetEditorSize.value = definition?.defaultSize || [...allowedSizes][0] || 'medium';
+    }
+    updateWidgetLinkControls();
+    if (widgetEditorNote) {
+      const guidance = widgetEditorGuidance(selectedType);
+      widgetEditorNote.textContent = guidance.message;
+      widgetEditorNote.classList.toggle('error', guidance.error);
+    }
+  }
+
+  function localDateTimeValue(value) {
+    const date = new Date(value || '');
+    if (Number.isNaN(date.getTime())) return '';
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+    return local.toISOString().slice(0, 16);
+  }
+
+  function openWidgetEditor(widget = null) {
+    if (!widgetEditorBackdrop || !widgetEditorForm) return;
+    widgetEditorReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : settingsWidgetAdd;
+    widgetEditorForm.reset();
+    if (widgetEditorId) widgetEditorId.value = widget?.id || '';
+    if (widgetEditorTitle) widgetEditorTitle.textContent = widget ? '编辑组件' : '新增组件';
+    if (widgetEditorType) widgetEditorType.disabled = Boolean(widget);
+    if (widgetEditorName) widgetEditorName.value = widget?.title || '';
+    if (widgetEditorSize) widgetEditorSize.value = widget?.size || 'medium';
+    const config = widget?.config || {};
+    if (widgetEditorContent) widgetEditorContent.value = config.body || '';
+    if (widgetEditorTarget) widgetEditorTarget.value = localDateTimeValue(config.targetTime);
+    renderWidgetLinkEditor(config.items);
+    if (widgetEditorTodayTodosLimit) widgetEditorTodayTodosLimit.value = config.limit || 4;
+    if (widgetEditorTodayTodosOverdue) widgetEditorTodayTodosOverdue.checked = config.includeOverdue !== false;
+    if (widgetEditorRecentNoteExcerpt) widgetEditorRecentNoteExcerpt.checked = config.showExcerpt !== false;
+    if (widgetEditorLinkGroupLimit) widgetEditorLinkGroupLimit.value = config.limit || 6;
+    refreshWidgetDataOptions(config);
+    setWidgetEditorType(widget?.type || 'text');
+    widgetEditorBackdrop.hidden = false;
+    setTimeout(() => widgetEditorName?.focus(), 0);
+  }
+
+  function closeWidgetEditor() {
+    if (!widgetEditorBackdrop || widgetEditorBackdrop.hidden) return;
+    widgetEditorBackdrop.hidden = true;
+    widgetEditorForm?.reset();
+    if (widgetEditorType) widgetEditorType.disabled = false;
+    const returnFocus = widgetEditorReturnFocus;
+    widgetEditorReturnFocus = null;
+    if (returnFocus?.isConnected) setTimeout(() => returnFocus.focus(), 0);
+  }
+
+  function widgetConfigFromEditor(type) {
+    if (type === 'text') return { body: widgetEditorContent?.value.trim() || '' };
+    if (type === 'countdown') {
+      const target = new Date(widgetEditorTarget?.value || '');
+      return { targetTime: target.toISOString() };
+    }
+    if (type === 'links') return { items: readWidgetLinkEditor() };
+    if (type === 'todayTodos') {
+      return {
+        limit: Number(widgetEditorTodayTodosLimit?.value || 4),
+        includeOverdue: widgetEditorTodayTodosOverdue?.checked !== false,
+      };
+    }
+    if (type === 'recentNote') {
+      return {
+        noteId: widgetEditorRecentNoteId?.value || '',
+        showExcerpt: widgetEditorRecentNoteExcerpt?.checked !== false,
+      };
+    }
+    return {
+      groupId: widgetEditorLinkGroupId?.value || '',
+      limit: Number(widgetEditorLinkGroupLimit?.value || 6),
+    };
+  }
+
+  function setWidgetEditorError(message) {
+    if (!widgetEditorNote) return;
+    widgetEditorNote.textContent = message;
+    widgetEditorNote.classList.add('error');
+  }
+
+  function submitWidgetEditor(event) {
+    event.preventDefault();
+    if (!widgetEditorForm?.reportValidity()) return;
+    const type = widgetEditorType?.value || 'text';
+    if (!CUSTOM_WIDGET_TYPES.has(type)) {
+      setWidgetEditorError('请选择支持的组件类型。');
+      return;
+    }
+    if (type === 'links') {
+      const invalidUrl = Array.from(widgetEditorLinksList?.querySelectorAll('[data-widget-link-url]') || [])
+        .find((input) => !window.NotchWidgetRegistry?.normalizePublicHttpUrl?.(input.value));
+      if (invalidUrl) {
+        setWidgetEditorError('每个链接都必须是公开可访问的 http 或 https 地址。');
+        invalidUrl.focus();
+        return;
+      }
+    }
+    if (type === 'recentNote' && widgetEditorRecentNoteId?.dataset.missingReference === 'true') {
+      setWidgetEditorError('原笔记已不存在，请重新选择笔记来源。');
+      widgetEditorRecentNoteId.focus();
+      return;
+    }
+    if (type === 'linkGroup' && (
+      !widgetEditorLinkGroupId?.value
+      || widgetEditorLinkGroupId.dataset.missingReference === 'true'
+    )) {
+      setWidgetEditorError('请选择仍然存在的链接分组。');
+      widgetEditorLinkGroupId?.focus();
+      return;
+    }
+    const title = widgetEditorName?.value.trim() || '';
+    const size = widgetEditorSize?.value || 'medium';
+    const config = widgetConfigFromEditor(type);
+    const id = widgetEditorId?.value || '';
+    if (id) {
+      document.dispatchEvent(new CustomEvent('notch:widget-update', {
+        detail: { id, patch: { type, title, size, config } },
+      }));
+    } else {
+      document.dispatchEvent(new CustomEvent('notch:widget-create', {
+        detail: { type, title, size, config },
+      }));
+    }
+    closeWidgetEditor();
+  }
+
   function applySettingsMirrorCover(dataUrl) {
     if (settingsMirrorPreview && typeof dataUrl === 'string' && dataUrl.startsWith('data:image/')) {
       settingsMirrorPreview.src = dataUrl;
@@ -948,6 +1457,7 @@
   }
 
   async function refreshSettingsPanel() {
+    document.dispatchEvent(new CustomEvent('notch:widgets-request'));
     if (!window.notchAPI) return;
     const [appSettings, workspace, config, mirrorImage] = await Promise.all([
       window.notchAPI.getAppSettings?.().catch(() => null),
@@ -1622,6 +2132,137 @@
     renderSettingsPanel();
     setSettingsNote('显示功能已更新。');
   });
+  settingsWidgetAdd?.addEventListener('click', () => openWidgetEditor());
+  homeWidgetManage?.addEventListener('click', () => {
+    document.getElementById('tab-button-settings')?.click();
+    setTimeout(() => document.getElementById('settings-widgets-card')?.scrollIntoView({ block: 'nearest' }), 0);
+  });
+  homeLayoutHintClose?.addEventListener('click', dismissHomeLayoutHint);
+  widgetEditorType?.addEventListener('change', () => {
+    refreshWidgetDataOptions({});
+    setWidgetEditorType(widgetEditorType.value);
+  });
+  widgetEditorRecentNoteId?.addEventListener('change', () => {
+    widgetEditorRecentNoteId.dataset.missingReference = 'false';
+    setWidgetEditorType('recentNote');
+  });
+  widgetEditorLinkGroupId?.addEventListener('change', () => {
+    widgetEditorLinkGroupId.dataset.missingReference = 'false';
+    setWidgetEditorType('linkGroup');
+  });
+  widgetEditorLinkAdd?.addEventListener('click', () => {
+    if (!widgetEditorLinksList || widgetEditorLinksList.children.length >= MAX_WIDGET_LINKS) return;
+    const row = createWidgetLinkRow({}, widgetEditorLinksList.children.length);
+    widgetEditorLinksList.append(row);
+    updateWidgetLinkControls();
+    row.querySelector('[data-widget-link-label]')?.focus();
+  });
+  widgetEditorLinksList?.addEventListener('click', (event) => {
+    const row = event.target.closest('[data-widget-link-row]');
+    if (!row) return;
+    const move = event.target.closest('[data-widget-link-move]');
+    if (move?.dataset.widgetLinkMove === 'up' && row.previousElementSibling) {
+      widgetEditorLinksList.insertBefore(row, row.previousElementSibling);
+      updateWidgetLinkControls();
+      move.focus();
+      return;
+    }
+    if (move?.dataset.widgetLinkMove === 'down' && row.nextElementSibling) {
+      widgetEditorLinksList.insertBefore(row.nextElementSibling, row);
+      updateWidgetLinkControls();
+      move.focus();
+      return;
+    }
+    const remove = event.target.closest('[data-widget-link-remove]');
+    if (!remove || widgetEditorLinksList.children.length <= 1) return;
+    const focusTarget = row.nextElementSibling || row.previousElementSibling;
+    row.remove();
+    updateWidgetLinkControls();
+    focusTarget?.querySelector('[data-widget-link-label]')?.focus();
+  });
+  widgetEditorForm?.addEventListener('submit', submitWidgetEditor);
+  widgetEditorClose?.addEventListener('click', closeWidgetEditor);
+  widgetEditorCancel?.addEventListener('click', closeWidgetEditor);
+  widgetEditorBackdrop?.addEventListener('click', (event) => {
+    if (event.target === widgetEditorBackdrop) closeWidgetEditor();
+  });
+  widgetEditorBackdrop?.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      closeWidgetEditor();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = Array.from(widgetEditorBackdrop.querySelectorAll(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter((element) => {
+      if (element.closest('[hidden], [aria-hidden="true"]')) return false;
+      const style = window.getComputedStyle(element);
+      return style.display !== 'none'
+        && style.visibility !== 'hidden'
+        && element.getClientRects().length > 0;
+    });
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+  settingsWidgetList?.addEventListener('change', (event) => {
+    const toggle = event.target.closest('input[data-widget-toggle]');
+    if (!toggle) return;
+    document.dispatchEvent(new CustomEvent('notch:widget-toggle', {
+      detail: { id: toggle.dataset.widgetToggle, enabled: toggle.checked },
+    }));
+  });
+  settingsWidgetList?.addEventListener('click', (event) => {
+    const move = event.target.closest('button[data-widget-move]');
+    if (move) {
+      const row = move.closest('[data-widget-id]');
+      const id = row?.dataset.widgetId;
+      const direction = move.dataset.widgetMove;
+      const widget = settingsWidgets.find((item) => item?.id === id);
+      if (!id || !['previous', 'next'].includes(direction)) return;
+      pendingWidgetFocus = { id, selector: '[data-widget-edit]' };
+      announceWidgetOrder(`组件「${widget?.title || '未命名'}」已${direction === 'previous' ? '前移' : '后移'}`);
+      document.dispatchEvent(new CustomEvent('notch:widget-move', {
+        detail: { id, direction },
+      }));
+      return;
+    }
+    const edit = event.target.closest('button[data-widget-edit]');
+    if (edit) {
+      const widget = settingsWidgets.find((item) => item?.id === edit.dataset.widgetEdit);
+      if (widget) openWidgetEditor(widget);
+      return;
+    }
+    const remove = event.target.closest('button[data-widget-delete]');
+    if (!remove) return;
+    const widget = settingsWidgets.find((item) => item?.id === remove.dataset.widgetDelete);
+    const title = widget?.title || CUSTOM_WIDGET_TYPE_LABELS[widget?.type] || '这个组件';
+    if (typeof window.confirm === 'function' && !window.confirm(`确定删除“${title}”吗？`)) return;
+    pendingRestoredWidgetFocusId = remove.dataset.widgetDelete;
+    if (pendingRestoredWidgetFocusTimer) clearTimeout(pendingRestoredWidgetFocusTimer);
+    pendingRestoredWidgetFocusTimer = setTimeout(() => {
+      pendingRestoredWidgetFocusId = '';
+      pendingRestoredWidgetFocusTimer = null;
+    }, 7000);
+    document.dispatchEvent(new CustomEvent('notch:widget-delete', {
+      detail: { id: remove.dataset.widgetDelete },
+    }));
+  });
+  document.addEventListener('notch:widgets-changed', (event) => {
+    const detail = event.detail || {};
+    settingsWidgets = Array.isArray(detail.widgets) ? detail.widgets : [];
+    settingsWidgetDefinitions = detail.definitions || {};
+    renderSettingsWidgets();
+  });
   settingsMirrorChoose?.addEventListener('click', async () => {
     if (!window.notchAPI?.chooseMirrorImage) return;
     settingsMirrorChoose.disabled = true;
@@ -1642,8 +2283,22 @@
     window.notchAPI?.openWorkspace?.().catch(() => setSettingsNote('无法打开数据文件夹。', true));
   });
   settingsWorkspaceChoose?.addEventListener('click', async () => {
-    const changed = await window.notchAPI?.chooseWorkspace?.().catch(() => false);
-    if (!changed) return;
+    const currentWorkspace = await window.notchAPI?.getWorkspace?.().catch(() => settingsWorkspace);
+    const snapshot = {};
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (key) snapshot[key] = localStorage.getItem(key);
+    }
+    const result = await window.notchAPI?.chooseWorkspace?.(
+      snapshot,
+      typeof currentWorkspace?.path === 'string' ? currentWorkspace.path : ''
+    ).catch(() => ({ ok: false }));
+    const changed = result === true || result?.ok === true;
+    if (!changed) {
+      const errorMessage = workspaceChooseErrorMessage(result?.error, result?.reason);
+      if (errorMessage) setSettingsNote(errorMessage, true);
+      return;
+    }
     settingsWorkspace = await window.notchAPI?.getWorkspace?.().catch(() => settingsWorkspace);
     renderSettingsPanel();
     setSettingsNote('数据文件夹已更新。');
@@ -1998,7 +2653,7 @@
       const heading = document.createElement('strong');
       heading.textContent = title;
       const hint = document.createElement('span');
-      hint.textContent = `系统设置 → 隐私与安全性 → ${pane}，允许 TO-DO Panel 后重试。`;
+      hint.textContent = `系统设置 → 隐私与安全性 → ${pane}，允许 Topisle 后重试。`;
       const action = document.createElement('button');
       action.type = 'button';
       action.className = 'window-permission-open';
@@ -2149,14 +2804,21 @@
   document.addEventListener('notch:tabchange', (event) => {
     clearWindowDragVisuals();
     workspaceTab = event.detail && event.detail.tab || 'home';
-    if (workspaceTab === 'home') refreshWindows();
+    if (workspaceTab === 'home') {
+      refreshWindows();
+      maybeShowHomeLayoutHint();
+    }
     if (workspaceTab === 'settings') refreshSettingsPanel();
   });
   document.addEventListener('notch:modechange', (event) => {
     clearWindowDragVisuals();
     workspaceExpanded = !!(event.detail && event.detail.expanded);
-    if (workspaceExpanded && workspaceTab === 'home') refreshWindows();
+    if (workspaceExpanded && workspaceTab === 'home') {
+      refreshWindows();
+      maybeShowHomeLayoutHint();
+    }
   });
+  maybeShowHomeLayoutHint();
 
   // ============ 本地汽水音乐 ============
   const homeMusic = document.getElementById('home-music');
@@ -2216,7 +2878,7 @@
       if (typeof showStatusToast === 'function') {
         showStatusToast(result && result.error === 'not_installed'
           ? '未安装汽水音乐'
-          : needsPermission ? '请在系统设置中允许 TO-DO Panel 使用辅助功能'
+          : needsPermission ? '请在系统设置中允许 Topisle 使用辅助功能'
             : needsSession ? '请先点击播放，再使用切歌控制' : '汽水音乐控制暂不可用');
       }
     } else {

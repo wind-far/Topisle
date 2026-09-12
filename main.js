@@ -38,12 +38,18 @@ const {
   controlSodaMusic,
   sodaShortcutSpec,
   selectTranscriptionSettings,
+  lockDownLocalWebContents,
+  inspectWorkspaceTarget,
+  copyWorkspaceAssets,
+  workspacePathsMatch,
+  writeWorkspaceEnvelope,
+  saveWorkspaceSnapshot,
 } = require('./main-services');
 
 // Keep the historical data directory so upgrading users retain notes, links,
 // recordings and encrypted settings after the public product rename.
 const LEGACY_USER_DATA_PATH = path.join(app.getPath('appData'), 'Dynamic Panel');
-app.setName('TO-DO Panel');
+app.setName('Topisle');
 app.setPath('userData', LEGACY_USER_DATA_PATH);
 
 // ============ 托盘图标 PNG 生成 ============
@@ -671,6 +677,24 @@ function recoverClosedTaskNotificationWindow(targetWindow) {
   if (!isQuitting) setTimeout(showNextTaskNotification, 80);
 }
 
+// 两个渲染窗口只加载随应用打包的本地 HTML。将它们固定在当前文档，避免用户组件内容
+// 把带 preload 能力的宿主变成浏览器，或创建额外的 BrowserWindow。
+function lockDownLocalWindow(targetWindow, entryFilePath) {
+  lockDownLocalWebContents(targetWindow.webContents, entryFilePath);
+}
+
+// 高权限 IPC 只能由主工作区窗口发起。通知窗口使用独立 preload，同时主进程仍
+// 在边界校验 sender，避免未来新增渲染内容时意外继承文件、凭据或系统操作能力。
+function isTrustedMainSender(event) {
+  return Boolean(
+    event
+    && event.sender
+    && mainWindow
+    && !mainWindow.isDestroyed()
+    && event.sender === mainWindow.webContents
+  );
+}
+
 function createTaskNotificationWindow() {
   if (notificationWindow && !notificationWindow.isDestroyed()) return notificationWindow;
   const bounds = getTaskNotificationBounds();
@@ -693,18 +717,25 @@ function createTaskNotificationWindow() {
     roundedCorners: false,
     show: false,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'renderer', 'notification-preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      webviewTag: false,
+      navigateOnDragDrop: false,
       backgroundThrottling: false,
     },
   });
 
   const targetWindow = notificationWindow;
+  const notificationEntryPath = path.join(__dirname, 'renderer', 'notification.html');
+  lockDownLocalWindow(targetWindow, notificationEntryPath);
   notificationWindow.setAlwaysOnTop(true, 'screen-saver', 1);
   notificationWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   notificationWindow.setIgnoreMouseEvents(false);
-  notificationWindow.loadFile(path.join(__dirname, 'renderer', 'notification.html'));
+  notificationWindow.loadFile(notificationEntryPath);
 
   targetWindow.webContents.once('did-finish-load', () => {
     if (notificationWindow !== targetWindow || targetWindow.isDestroyed()) return;
@@ -961,9 +992,16 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      webviewTag: false,
+      navigateOnDragDrop: false,
     },
   });
 
+  const mainEntryPath = path.join(__dirname, 'renderer', 'index.html');
+  lockDownLocalWindow(mainWindow, mainEntryPath);
   mainWindow.setAlwaysOnTop(true, 'screen-saver');
   mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
@@ -988,7 +1026,7 @@ function createWindow() {
     cameraBlurDeferred = false;
   });
 
-  mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  mainWindow.loadFile(mainEntryPath);
 
   mainWindow.once('ready-to-show', () => {
     applyMode('collapsed');
@@ -1104,41 +1142,42 @@ function workspacePath(name) {
   return path.join(workspaceRoot(), name);
 }
 
-function copyWorkspaceAssets(sourceRoot, targetRoot) {
-  if (!sourceRoot || !targetRoot || path.resolve(sourceRoot) === path.resolve(targetRoot)) return;
-  for (const directory of [RECORDINGS_DIR_NAME, CLIP_IMAGES_DIR_NAME]) {
-    const source = path.join(sourceRoot, directory);
-    const target = path.join(targetRoot, directory);
-    try {
-      if (!fs.existsSync(source) || !fs.lstatSync(source).isDirectory()) continue;
-      fs.mkdirSync(target, { recursive: true });
-      fs.cpSync(source, target, { recursive: true, force: false, errorOnExist: false });
-    } catch (error) {}
-  }
-  for (const filename of [WORKSPACE_DATA_FILE, MIRROR_IMAGE_FILE]) {
-    const source = path.join(sourceRoot, filename);
-    const target = path.join(targetRoot, filename);
-    try {
-      if (fs.existsSync(source) && fs.lstatSync(source).isFile() && !fs.existsSync(target)) {
-        fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL);
-      }
-    } catch (error) {}
-  }
-}
-
 async function chooseWorkspaceFolder() {
-  const result = await dialog.showOpenDialog({ title: '选择 TO-DO Panel 数据文件夹', properties: ['openDirectory', 'createDirectory'] });
+  const result = await dialog.showOpenDialog({ title: '选择 Topisle 数据文件夹', properties: ['openDirectory', 'createDirectory'] });
   const selected = !result.canceled && result.filePaths && result.filePaths[0];
-  if (!selected) return false;
+  if (!selected) return { ok: false, canceled: true };
   const previousRoot = workspaceRoot();
-  copyWorkspaceAssets(previousRoot, selected);
-  if (!writeJsonFile(getJsonSettingsPath(WORKSPACE_SETTINGS_FILE), { path: selected })) return false;
+  if (workspacePathsMatch(previousRoot, selected)) return { ok: true, unchanged: true, path: selected };
+  const target = inspectWorkspaceTarget(selected, WORKSPACE_DATA_FILE);
+  if (!target.ok) return { ok: false, error: target.error };
+  // 已有且通过校验的 workspace.json 表示“打开另一工作区”；只有空目录才迁移
+  // 当前数据。校验失败时在修改设置前返回，目标文件不会被自动保存覆盖。
+  if (target.kind === 'empty') {
+    const migrated = copyWorkspaceAssets(previousRoot, selected, {
+      directories: [RECORDINGS_DIR_NAME, CLIP_IMAGES_DIR_NAME],
+      files: [WORKSPACE_DATA_FILE, MIRROR_IMAGE_FILE],
+    });
+    if (!migrated) return { ok: false, error: 'workspace_migration_failed' };
+    const migratedTarget = inspectWorkspaceTarget(selected, WORKSPACE_DATA_FILE);
+    if (!migratedTarget.ok || migratedTarget.kind !== 'existing') {
+      return { ok: false, error: migratedTarget.error || 'workspace_migration_failed' };
+    }
+  }
+  if (!writeJsonFile(getJsonSettingsPath(WORKSPACE_SETTINGS_FILE), { path: selected })) {
+    return { ok: false, error: 'workspace_settings_save_failed' };
+  }
   for (const directory of [RECORDINGS_DIR_NAME, CLIP_IMAGES_DIR_NAME]) {
     try { fs.mkdirSync(path.join(selected, directory), { recursive: true }); } catch (error) {}
   }
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('workspace:changed', { path: selected });
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('workspace:changed', {
+      path: selected,
+      strategy: 'reload-target',
+      source: target.kind === 'existing' ? 'existing' : 'migrated',
+    });
+  }
   refreshTrayMenu();
-  return true;
+  return { ok: true, path: selected, source: target.kind === 'existing' ? 'existing' : 'migrated' };
 }
 
 function applyFeatureServices(features) {
@@ -1309,8 +1348,8 @@ function refreshTrayMenu() {
       click: () => {
         dialog.showMessageBox({
           type: 'info',
-          title: '关于 TO-DO Panel',
-          message: 'TO-DO Panel',
+          title: '关于 Topisle',
+          message: 'Topisle 顶屿',
           detail:
             `版本 ${app.getVersion()}\n\n一个开源、常驻 macOS 屏幕顶部的本地工作台。工作区数据默认保存在本机；账号密码与 API Key 由 macOS 安全存储加密。\n\nMIT License`,
           buttons: ['查看 GitHub', '好'],
@@ -1318,7 +1357,7 @@ function refreshTrayMenu() {
           cancelId: 1,
           noLink: true,
         }).then(({ response }) => {
-          if (response === 0) shell.openExternal('https://github.com/xiaopu-ai/TO-DO-Panel');
+          if (response === 0) shell.openExternal('https://github.com/wind-far/Topisle');
         });
       },
     },
@@ -1334,7 +1373,7 @@ function refreshTrayMenu() {
 
 function createTray() {
   tray = new Tray(createNotchTrayIcon());
-  tray.setToolTip('TO-DO Panel');
+  tray.setToolTip('Topisle');
   tray.on('click', () => {
     if (!mainWindow) return;
     if (!mainWindow.isVisible()) {
@@ -1385,12 +1424,21 @@ ipcMain.handle('settings:set-shortcut', (event, accelerator) => {
   refreshTrayMenu();
   return { ok: true, shortcut: accelerator };
 });
-ipcMain.handle('workspace:get', () => ({ path: workspaceRoot(), portable: workspaceRoot() !== app.getPath('userData') }));
-ipcMain.handle('workspace:load-data', () => {
-  const payload = readJsonFile(workspacePath(WORKSPACE_DATA_FILE), {});
-  return payload && payload.localStorage && typeof payload.localStorage === 'object'
-    ? payload.localStorage
-    : {};
+ipcMain.handle('workspace:get', (event) => {
+  if (!isTrustedMainSender(event)) return { path: '', portable: false, error: 'forbidden' };
+  return { path: workspaceRoot(), portable: workspaceRoot() !== app.getPath('userData') };
+});
+ipcMain.handle('workspace:load-data', (event) => {
+  if (!isTrustedMainSender(event)) return { ok: false, storage: {}, error: 'forbidden', kind: 'invalid' };
+  const inspected = inspectWorkspaceTarget(workspaceRoot(), WORKSPACE_DATA_FILE);
+  if (!inspected.ok) {
+    return { ok: false, storage: {}, error: inspected.error, kind: 'invalid' };
+  }
+  return {
+    ok: true,
+    storage: inspected.kind === 'existing' ? inspected.envelope.localStorage : {},
+    kind: inspected.kind,
+  };
 });
 
 function normalizePortableStorage(storage) {
@@ -1413,19 +1461,31 @@ function normalizePortableStorage(storage) {
   return portable;
 }
 
-ipcMain.handle('workspace:save-data', (event, storage) => {
-  if (!storage || typeof storage !== 'object' || Array.isArray(storage)) return false;
+function persistWorkspaceSnapshot(storage, expectedPath) {
+  if (!storage || typeof storage !== 'object' || Array.isArray(storage)) {
+    return { ok: false, error: 'invalid_workspace_storage' };
+  }
+  const rendererExpectedPath = typeof expectedPath === 'string' ? expectedPath : '';
   const portableStorage = normalizePortableStorage(storage);
-  const serialized = JSON.stringify(portableStorage);
-  if (Buffer.byteLength(serialized) > 8 * 1024 * 1024) return false;
-  return writeJsonFile(workspacePath(WORKSPACE_DATA_FILE), {
-    version: 1,
-    updatedAt: Date.now(),
-    localStorage: portableStorage,
+  return saveWorkspaceSnapshot(rendererExpectedPath, workspaceRoot(), portableStorage, {
+    workspaceFilename: WORKSPACE_DATA_FILE,
   });
+}
+
+ipcMain.handle('workspace:save-data', (event, payload) => {
+  if (!isTrustedMainSender(event)) return false;
+  return persistWorkspaceSnapshot(payload && payload.storage, payload && payload.expectedPath).ok;
 });
-ipcMain.handle('workspace:open', () => shell.openPath(workspaceRoot()));
-ipcMain.handle('workspace:choose', () => chooseWorkspaceFolder());
+ipcMain.handle('workspace:open', (event) => {
+  if (!isTrustedMainSender(event)) return false;
+  return shell.openPath(workspaceRoot());
+});
+ipcMain.handle('workspace:choose', async (event, payload) => {
+  if (!isTrustedMainSender(event)) return false;
+  const flushed = persistWorkspaceSnapshot(payload && payload.storage, payload && payload.expectedPath);
+  if (!flushed.ok) return { ok: false, error: 'workspace_flush_failed', reason: flushed.error };
+  return chooseWorkspaceFolder();
+});
 
 function getLayoutMetrics(display) {
   const d = display || getWindowDisplay();
@@ -1489,13 +1549,16 @@ ipcMain.handle('media:microphone', async () => {
 ipcMain.handle('tasks:recent', () => taskCompletionHistory);
 
 // 快捷链接：URL 走外部浏览器（仅 http/https），本地路径走系统打开（仅绝对路径）
-ipcMain.handle('shell:openExternal', (event, url) => {
-  if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
-    return shell.openExternal(url);
-  }
+ipcMain.handle('shell:openExternal', async (event, url) => {
+  if (!isTrustedMainSender(event)) return false;
+  const safeUrl = await validatePublicHttpUrl(url);
+  if (!safeUrl) return false;
+  await shell.openExternal(safeUrl.toString());
+  return true;
 });
 
 ipcMain.handle('shell:openPath', (event, p) => {
+  if (!isTrustedMainSender(event)) return false;
   if (typeof p === 'string' && path.isAbsolute(p)) {
     return shell.openPath(p);
   }
@@ -1511,6 +1574,7 @@ const PRIVACY_SETTINGS_PANES = {
 };
 
 ipcMain.handle('shell:open-privacy-settings', (event, pane) => {
+  if (!isTrustedMainSender(event)) return false;
   const target = PRIVACY_SETTINGS_PANES[String(pane || '')];
   if (!target) return false;
   shell.openExternal(target);
@@ -1555,11 +1619,11 @@ async function promptForMissingPermissions() {
   const names = missing.map((key) => (key === 'accessibility' ? '辅助功能' : '屏幕录制'));
   const { response, checkboxChecked } = await dialog.showMessageBox({
     type: 'info',
-    message: `TO-DO Panel 需要「${names.join('」和「')}」权限`,
+    message: `Topisle 需要「${names.join('」和「')}」权限`,
     detail: [
       '缺少这些权限时，「当前窗口」会读不到任何窗口，汽水音乐的播放控制也不会生效。',
       '',
-      '授权后需要重新启动 TO-DO Panel 才会生效。',
+      '授权后需要重新启动 Topisle 才会生效。',
       'ad-hoc 签名的应用每次重新打包都要重新授权一次，这是没有开发者账号分发的固有限制。',
     ].join('\n'),
     buttons: ['打开系统设置', '以后再说'],
@@ -1575,7 +1639,7 @@ async function promptForMissingPermissions() {
   if (response !== 0) return;
 
   // 顺带用 true 触发一次系统的辅助功能提示：这一步会把应用登记进系统设置的列表里，
-  // 否则用户打开设置面板可能找不到 TO-DO Panel 这一项、只能手动拖进去。
+  // 否则用户打开设置面板可能找不到 Topisle 这一项、只能手动拖进去。
   if (missing.includes('accessibility')) systemPreferences.isTrustedAccessibilityClient(true);
   shell.openExternal(PRIVACY_SETTINGS_PANES[missing[0]]);
 }
@@ -2182,8 +2246,14 @@ async function rememberPasteTarget() {
   return previousPasteTarget;
 }
 
-ipcMain.handle('mirror:get-image', () => mirrorImageDataUrl());
-ipcMain.handle('mirror:choose-image', () => chooseMirrorImage());
+ipcMain.handle('mirror:get-image', (event) => {
+  if (!isTrustedMainSender(event)) return '';
+  return mirrorImageDataUrl();
+});
+ipcMain.handle('mirror:choose-image', (event) => {
+  if (!isTrustedMainSender(event)) return { ok: false, error: 'forbidden' };
+  return chooseMirrorImage();
+});
 
 function getCredentialsVaultPath() {
   return path.join(app.getPath('userData'), CREDENTIALS_VAULT_FILE);
@@ -2226,18 +2296,23 @@ function publicCredential(item) {
   };
 }
 
-ipcMain.handle('credentials:list', () => ({
-  ok: safeStorage.isEncryptionAvailable(),
-  secureStorage: safeStorage.isEncryptionAvailable(),
-  items: readCredentialsVault().map(publicCredential),
-}));
+ipcMain.handle('credentials:list', (event) => {
+  if (!isTrustedMainSender(event)) return { ok: false, error: 'forbidden', items: [] };
+  return {
+    ok: safeStorage.isEncryptionAvailable(),
+    secureStorage: safeStorage.isEncryptionAvailable(),
+    items: readCredentialsVault().map(publicCredential),
+  };
+});
 
 ipcMain.handle('credentials:get', (event, id) => {
+  if (!isTrustedMainSender(event)) return { ok: false, error: 'forbidden' };
   const item = readCredentialsVault().find((row) => row.id === String(id || ''));
   return item ? { ok: true, item: { ...item } } : { ok: false, error: 'not_found' };
 });
 
 ipcMain.handle('credentials:save', (event, payload) => {
+  if (!isTrustedMainSender(event)) return { ok: false, error: 'forbidden' };
   if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: 'secure_storage_unavailable' };
   const rows = readCredentialsVault();
   const existing = payload && payload.id ? rows.find((item) => item.id === payload.id) : null;
@@ -2256,6 +2331,7 @@ ipcMain.handle('credentials:save', (event, payload) => {
 });
 
 ipcMain.handle('credentials:delete-many', (event, ids) => {
+  if (!isTrustedMainSender(event)) return { ok: false, error: 'forbidden', deleted: 0 };
   const targets = new Set(Array.isArray(ids) ? ids.map(String) : []);
   if (!targets.size) return { ok: true, deleted: 0 };
   const rows = readCredentialsVault();
@@ -2265,6 +2341,7 @@ ipcMain.handle('credentials:delete-many', (event, ids) => {
 });
 
 ipcMain.handle('credentials:copy', (event, payload) => {
+  if (!isTrustedMainSender(event)) return false;
   const id = String(payload && payload.id || '');
   const field = payload && payload.field === 'password' ? 'password' : payload && payload.field === 'account' ? 'account' : '';
   if (!id || !field) return false;
@@ -2720,6 +2797,7 @@ function getSafeRecordingPath(value) {
 }
 
 ipcMain.handle('recordings:save', async (event, payload) => {
+  if (!isTrustedMainSender(event)) return { ok: false, error: 'forbidden' };
   if (!payload || !payload.bytes) return { ok: false, error: 'empty_audio' };
   let buffer;
   try {
@@ -2744,6 +2822,7 @@ ipcMain.handle('recordings:save', async (event, payload) => {
 });
 
 ipcMain.handle('recordings:read', async (event, audioPath) => {
+  if (!isTrustedMainSender(event)) return null;
   const safePath = getSafeRecordingPath(audioPath);
   if (!safePath) return null;
   try {
@@ -2757,6 +2836,7 @@ ipcMain.handle('recordings:read', async (event, audioPath) => {
 });
 
 ipcMain.handle('recordings:delete', async (event, audioPath) => {
+  if (!isTrustedMainSender(event)) return false;
   const safePath = getSafeRecordingPath(audioPath);
   if (!safePath) return false;
   try {
@@ -2768,6 +2848,7 @@ ipcMain.handle('recordings:delete', async (event, audioPath) => {
 });
 
 ipcMain.handle('recordings:reveal', (event, audioPath) => {
+  if (!isTrustedMainSender(event)) return false;
   const safePath = getSafeRecordingPath(audioPath);
   if (!safePath) return false;
   shell.showItemInFolder(safePath);
@@ -2965,6 +3046,7 @@ ipcMain.handle('shortcut:hover-space-status', () => ({
 
 // 渲染层请求把图片文件读成 dataURL 回显（contextIsolation 下 file:// 受限，走 IPC 读盘）
 ipcMain.handle('clipboard:readImage', async (event, imagePath) => {
+  if (!isTrustedMainSender(event)) return null;
   const safePath = getSafeClipImagePath(imagePath);
   if (!safePath) return null; // 只允许读自己的图片目录
   try {
@@ -2977,6 +3059,7 @@ ipcMain.handle('clipboard:readImage', async (event, imagePath) => {
 
 // FIFO 淘汰 / 删除 / 清空时，连带删除本地图片文件（文件 I/O 归主进程）
 ipcMain.handle('clipboard:deleteImages', async (event, paths) => {
+  if (!isTrustedMainSender(event)) return false;
   if (!Array.isArray(paths)) return;
   for (const p of paths) {
     const safePath = getSafeClipImagePath(p);
@@ -3051,11 +3134,15 @@ function pasteToPreviousApp(target) {
   });
 }
 
-ipcMain.handle('clipboard:write', (event, entry) => writeClipboardEntry(entry));
+ipcMain.handle('clipboard:write', (event, entry) => {
+  if (!isTrustedMainSender(event)) return false;
+  return writeClipboardEntry(entry);
+});
 
 // 点击历史项后先收起灵动岛，再回到打开面板前的应用执行粘贴。
 // 若系统尚未授予辅助功能权限，内容仍保留在系统剪贴板作为可靠降级。
 ipcMain.handle('clipboard:paste', async (event, entry) => {
+  if (!isTrustedMainSender(event)) return { ok: false, pasted: false, error: 'forbidden' };
   if (!writeClipboardEntry(entry)) return { ok: false, pasted: false };
   if (process.platform === 'darwin' && !systemPreferences.isTrustedAccessibilityClient(true)) {
     return { ok: true, pasted: false, permissionRequired: true };

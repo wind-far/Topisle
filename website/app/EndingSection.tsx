@@ -30,7 +30,7 @@ export default function EndingSection() {
           className="ending-wordmark"
           style={reducedMotion ? undefined : { y: wordmarkY }}
         >
-          TO-DO PANEL
+          TOPISLE
         </motion.h2>
 
         <motion.div
@@ -39,7 +39,7 @@ export default function EndingSection() {
         >
           {/* This is the real collapsed-state capture from the running product. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={assetPath("/hero/panel-collapsed.png")} alt="TO-DO Panel 真实折叠态" />
+          <img src={assetPath("/hero/panel-collapsed.png")} alt="Topisle 真实折叠态" />
         </motion.div>
 
         <motion.div className="ending-copy">
@@ -47,7 +47,7 @@ export default function EndingSection() {
           <p>需要时展开，用完即收起</p>
         </motion.div>
 
-        <footer><span>macOS 14+ · Apple Silicon · MIT</span><span>© 2026 TO-DO Panel</span></footer>
+        <footer><span>macOS 14+ · Apple Silicon · MIT</span><span>© 2026 Topisle</span></footer>
       </div>
     </section>
   );

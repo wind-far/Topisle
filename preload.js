@@ -52,9 +52,15 @@ contextBridge.exposeInMainWorld('notchAPI', {
   onRecordShortcut: (cb) => subscribe('app:record-shortcut', () => cb()),
   getWorkspace: () => ipcRenderer.invoke('workspace:get'),
   loadWorkspaceData: () => ipcRenderer.invoke('workspace:load-data'),
-  saveWorkspaceData: (storage) => ipcRenderer.invoke('workspace:save-data', storage),
+  saveWorkspaceData: (storage, expectedPath) => ipcRenderer.invoke('workspace:save-data', {
+    storage,
+    expectedPath,
+  }),
   openWorkspace: () => ipcRenderer.invoke('workspace:open'),
-  chooseWorkspace: () => ipcRenderer.invoke('workspace:choose'),
+  chooseWorkspace: (storage, expectedPath) => ipcRenderer.invoke('workspace:choose', {
+    storage,
+    expectedPath,
+  }),
   onWorkspaceChanged: (cb) => subscribe('workspace:changed', (event, info) => cb(info)),
   onCollapseRequest: (cb) => subscribe('window:request-collapse', () => cb()),
   getMetrics: () => ipcRenderer.invoke('window:metrics'),

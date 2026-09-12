@@ -1,51 +1,71 @@
 <div align="center">
-  <img src="build/to-do-panel-icon.png" width="112" alt="TO-DO Panel 图标" />
-  <h1>TO-DO Panel</h1>
-  <p><strong>把 Mac 刘海，变成随手可用的工作台。</strong></p>
-  <p>待办、随笔记、链接、录音与本机 AI 提醒，始终贴顶待命。</p>
+  <img src="build/topisle-icon.png" width="112" alt="Topisle 图标" />
+  <h1>Topisle 顶屿</h1>
+  <p><strong>屏幕顶端，你的本地工作岛。</strong></p>
+  <p>待办、随笔记、链接、录音、自定义组件与本机 AI 提醒，始终贴顶待命。</p>
   <p>
-    <a href="https://github.com/xiaopu-ai/TO-DO-Panel/releases/latest"><strong>下载 macOS 版</strong></a>
+    <a href="https://github.com/wind-far/Topisle/releases/latest"><strong>下载 macOS 版</strong></a>
     ·
     <a href="#从源码运行">从源码运行</a>
     ·
     <a href="#更新日志">更新日志</a>
     ·
-    <a href="https://github.com/xiaopu-ai/TO-DO-Panel/issues">反馈问题</a>
+    <a href="https://github.com/wind-far/Topisle/issues">反馈问题</a>
   </p>
   <p>
-    <img alt="Release" src="https://img.shields.io/github/v/release/xiaopu-ai/TO-DO-Panel?style=flat-square&color=7c8cff" />
+    <img alt="Release" src="https://img.shields.io/github/v/release/wind-far/Topisle?style=flat-square&color=7c8cff" />
     <img alt="macOS Apple Silicon" src="https://img.shields.io/badge/macOS-Apple%20Silicon-111318?style=flat-square&logo=apple" />
     <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-35c58b?style=flat-square" />
     <img alt="Electron 33" src="https://img.shields.io/badge/Electron-33-47848f?style=flat-square&logo=electron" />
   </p>
 </div>
 
-![TO-DO Panel 首页](docs/screenshots/home.png)
+![Topisle 首页](docs/screenshots/home.png)
 
-![TO-DO Panel 待办](docs/screenshots/todo.png)
+![Topisle 待办](docs/screenshots/todo.png)
 
 ## 它是什么
 
-TO-DO Panel 是一个常驻 macOS 屏幕顶部的本地工作台。默认折叠成物理刘海大小，点击后从顶部展开；常用信息和动作不必再散落在多个应用里。
+Topisle（中文名「顶屿」）是一个常驻 macOS 屏幕顶部的本地工作台。默认折叠成物理刘海大小，点击后从顶部展开；常用信息和动作不必再散落在多个应用里。
 
 | 页面 | 解决什么问题 |
 | --- | --- |
-| **首页** | 当前窗口、镜子、快速录音、随笔记、常用指令、汽水音乐和番茄钟集中在一个 Bento 工作台 |
+| **首页** | 当前窗口、镜子、快速录音、随笔记、常用指令、汽水音乐和番茄钟集中在一个 Bento 工作台，并支持添加本地自定义组件 |
 | **待办** | 四个可改名的工作流，截止日期可逐月切换并自然跨年，按截止时间排序，并在到期前一小时提醒 |
 | **随笔记** | Markdown 速记、归档、搜索、重命名与智能标题 |
 | **链接** | 保存公开网址，后台补全标题、图标和分组 |
 | **录制** | 录音开始即创建实时记录，同步显示状态与转写，并可在页内配置 API |
 | **密钥** | 使用 macOS 安全存储加密账号、密码和 API Key |
-| **设置** | 当菜单栏图标被刘海遮挡时，仍可在面板内配置 API、镜子、功能显示、快捷键、数据目录与开机启动 |
+| **设置** | 当菜单栏图标被刘海遮挡时，仍可在面板内配置 API、镜子、自定义组件、功能显示、快捷键、数据目录与开机启动 |
 
 剪贴板历史默认关闭，可从菜单栏或面板「设置」的「显示功能」中按需启用。菜单栏入口与设置页读写同一份本机配置；即使状态栏图标过多、被物理刘海遮挡，也不影响调整。Codex、Claude Code 与 GPT 的本机完成事件也可以直接显示为不抢焦点的顶部提醒。
+
+## 自定义首页组件
+
+从首页右上角的「＋ 组件」或「设置 → 自定义组件」进入管理页。每个工作区最多添加 8 个自定义组件：
+
+1. 点击「新增组件」，选择类型、标题和尺寸。
+2. 填写该类型需要的内容或选择本机数据来源。
+3. 保存后组件会出现在首页，Bento 网格会自动调整布局。
+4. 在设置页可继续编辑、隐藏、前移、后移或删除；删除后可立即撤销。
+
+| 组件类型 | 适合展示 | 可配置内容 |
+| --- | --- | --- |
+| **文本卡片** | 项目状态、备忘、固定提示 | 纯文本内容 |
+| **倒计时** | 上线、考试、纪念日 | 目标日期与时间 |
+| **快捷链接** | 项目入口、常用工具 | 最多 12 个公开 HTTP/HTTPS 链接，并可调整链接顺序 |
+| **今日待办** | 当天要完成的任务 | 展示 1–8 条，可选择是否包含逾期未完成项 |
+| **最近笔记** | 最近更新或指定的一篇笔记 | 自动跟随最近笔记或固定引用，可选择是否显示摘要 |
+| **链接分组** | 已整理的一组收藏 | 引用现有链接分组并展示 1–8 条 |
+
+自定义组件是声明式的本地卡片，配置与布局随当前工作区保存在本机，不支持输入或执行 HTML、JavaScript 和远程组件代码。今日待办、最近笔记与链接分组只保存源数据 ID 和展示选项，不复制正文；被引用的笔记或链接分组删除后，组件会显示空状态，避免保留过期副本。快捷链接只接受公开 HTTP/HTTPS 地址，本机和内网地址会被拒绝。
 
 ## 下载与安装
 
 > 当前版本：**1.0.2** · 支持 **Apple Silicon Mac**
 
-1. 前往 [GitHub Releases](https://github.com/xiaopu-ai/TO-DO-Panel/releases/latest) 下载 `TO-DO-Panel-*-arm64.dmg`。
-2. 打开 DMG，将 `TO-DO Panel.app` 拖入「应用程序」。
+1. 前往 [GitHub Releases](https://github.com/wind-far/Topisle/releases/latest) 下载 `Topisle-*-arm64.dmg`。
+2. 打开 DMG，将 `Topisle.app` 拖入「应用程序」。
 3. 首次启动若被 macOS 拦截，前往「系统设置 → 隐私与安全性」，点击「仍要打开」。
 4. 再次启动，根据需要授予辅助功能、屏幕录制、麦克风或摄像头权限。
 
@@ -64,10 +84,11 @@ TO-DO Panel 是一个常驻 macOS 屏幕顶部的本地工作台。默认折叠�
 - **数据留在本机**：待办、笔记、链接、录音元数据和工作区设置保存在本地，无后端和云同步。
 - **权限边界清晰**：链接元数据抓取会阻止本机、内网地址和不安全重定向；窗口聚焦只接受最近扫描缓存中的 ID。
 - **可迁移工作区**：可从菜单栏选择数据文件夹，换电脑时复制该文件夹继续使用。
+- **升级保持兼容**：品牌升级为 Topisle 后继续沿用历史应用标识与数据目录，原有工作区和系统授权不会因改名被主动重置。
 
 ## 本机 AI 完成提醒
 
-TO-DO Panel 只在 `127.0.0.1:43821` 监听通知接口，来源限 `codex`、`claude` 与 `gpt`：
+Topisle 只在 `127.0.0.1:43821` 监听通知接口，来源限 `codex`、`claude` 与 `gpt`：
 
 ```bash
 curl -X POST http://127.0.0.1:43821/notify/codex \
@@ -78,8 +99,8 @@ curl -X POST http://127.0.0.1:43821/notify/codex \
 仓库已提供 [Codex 转发脚本](scripts/codex-notify.js) 和 [Claude Code 转发脚本](scripts/claude-notify.js)。通过 DMG 安装后，脚本路径为：
 
 ```text
-/Applications/TO-DO Panel.app/Contents/Resources/app/scripts/codex-notify.js
-/Applications/TO-DO Panel.app/Contents/Resources/app/scripts/claude-notify.js
+/Applications/Topisle.app/Contents/Resources/app/scripts/codex-notify.js
+/Applications/Topisle.app/Contents/Resources/app/scripts/claude-notify.js
 ```
 
 ## 从源码运行
@@ -87,8 +108,8 @@ curl -X POST http://127.0.0.1:43821/notify/codex \
 桌面端要求 Node.js 18+：
 
 ```bash
-git clone https://github.com/xiaopu-ai/TO-DO-Panel.git
-cd TO-DO-Panel
+git clone https://github.com/wind-far/Topisle.git
+cd Topisle
 npm install
 npm test
 npm start
@@ -98,7 +119,7 @@ npm start
 
 | 命令 | 用途 |
 | --- | --- |
-| `npm test` | 单元测试与 JavaScript 语法检查 |
+| `npm test` | 单元测试、Electron 交互/安全边界测试与 JavaScript 语法检查 |
 | `npm start` | 启动 Electron 开发版 |
 | `npm run pack` | 生成未安装的 `.app` |
 | `npm run build` | 生成 Apple Silicon DMG |
@@ -119,7 +140,7 @@ npm run dev
 ├── main.js                 # Electron 主进程、窗口与系统服务
 ├── main-services.js        # 可测试的纯领域服务
 ├── preload.js              # contextBridge 安全桥
-├── renderer/               # 桌面界面与交互
+├── renderer/               # 桌面界面、交互与自定义组件注册表
 ├── tests/                  # Node 单元测试
 ├── build/                  # 图标、签名与 DMG 配置
 ├── scripts/                # Codex / Claude Code 通知转发

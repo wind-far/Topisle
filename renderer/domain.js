@@ -601,38 +601,78 @@
     }));
   }
 
-  function normalizeHomeWidgetSizes(value, defaults, preferredId, capacity = Infinity) {
+  function normalizeHomeWidgetSizes(value, defaults, preferredId, capacity = Infinity, allowedSizesById = null) {
     const fallback = defaults && typeof defaults === 'object' ? { ...defaults } : {};
-    const allowed = new Set(['mini', 'small', 'medium', 'large']);
+    const orderedSizes = ['mini', 'small', 'medium', 'large'];
+    const allowed = new Set(orderedSizes);
     const source = value && typeof value === 'object' ? value : {};
-    if (Object.keys(source).some((key) => key in fallback && !allowed.has(source[key]))) {
+    const constraints = allowedSizesById && typeof allowedSizesById === 'object'
+      ? allowedSizesById
+      : {};
+    const allowedFor = (key) => {
+      const configured = Array.isArray(constraints[key])
+        ? constraints[key].filter((size) => allowed.has(size))
+        : [];
+      return configured.length ? orderedSizes.filter((size) => configured.includes(size)) : orderedSizes;
+    };
+    if (!allowedSizesById && Object.keys(source).some((key) => key in fallback && !allowed.has(source[key]))) {
       return fallback;
     }
     const sizes = Object.fromEntries(Object.entries(fallback).map(([key, defaultSize]) => (
-      [key, allowed.has(source[key]) ? source[key] : defaultSize]
+      [key, allowedFor(key).includes(source[key])
+        ? source[key]
+        : allowedFor(key).includes(defaultSize) ? defaultSize : allowedFor(key)[0]]
     )));
     const area = { mini: 2, small: 4, medium: 8, large: 16 };
     const totalArea = () => Object.values(sizes).reduce((total, size) => total + area[size], 0);
     const siblings = Object.keys(sizes).filter((key) => key !== preferredId);
 
+    const adjacentSize = (key, direction) => {
+      const sequence = allowedFor(key);
+      const index = sequence.indexOf(sizes[key]);
+      return sequence[index + direction] || '';
+    };
+
     while (totalArea() > capacity) {
       const excess = totalArea() - capacity;
-      const candidate = siblings
-        .map((key) => ({ key, reduction: sizes[key] === 'large' ? 8 : sizes[key] === 'medium' ? 4 : sizes[key] === 'small' ? 2 : 0 }))
-        .filter((item) => item.reduction > 0 && item.reduction <= excess)
-        .sort((a, b) => b.reduction - a.reduction)[0];
+      const candidates = siblings
+        .map((key) => {
+          const next = adjacentSize(key, -1);
+          return { key, next, reduction: next ? area[sizes[key]] - area[next] : 0 };
+        })
+        .filter((item) => item.reduction > 0);
+      if (allowedSizesById && !candidates.length && Object.prototype.hasOwnProperty.call(sizes, preferredId)) {
+        const next = adjacentSize(preferredId, -1);
+        if (next) candidates.push({
+          key: preferredId,
+          next,
+          reduction: area[sizes[preferredId]] - area[next],
+        });
+      }
+      const candidate = candidates
+        .filter((item) => item.reduction <= excess)
+        .sort((a, b) => b.reduction - a.reduction)[0]
+        || candidates.sort((a, b) => a.reduction - b.reduction)[0];
       if (!candidate) break;
-      sizes[candidate.key] = sizes[candidate.key] === 'large' ? 'medium' : sizes[candidate.key] === 'medium' ? 'small' : 'mini';
+      sizes[candidate.key] = candidate.next;
     }
 
     while (Number.isFinite(capacity) && totalArea() < capacity) {
       const remaining = capacity - totalArea();
-      const candidate = siblings
-        .map((key) => ({ key, increase: sizes[key] === 'mini' ? 2 : sizes[key] === 'small' ? 4 : sizes[key] === 'medium' ? 8 : 0 }))
-        .filter((item) => item.increase > 0 && item.increase <= remaining)
-        .sort((a, b) => b.increase - a.increase)[0];
+      const candidates = siblings
+        .map((key) => {
+          const next = adjacentSize(key, 1);
+          return { key, next, increase: next ? area[next] - area[sizes[key]] : 0 };
+        })
+        .filter((item) => item.increase > 0 && item.increase <= remaining);
+      if (allowedSizesById && !candidates.length && Object.prototype.hasOwnProperty.call(sizes, preferredId)) {
+        const next = adjacentSize(preferredId, 1);
+        const increase = next ? area[next] - area[sizes[preferredId]] : 0;
+        if (increase > 0 && increase <= remaining) candidates.push({ key: preferredId, next, increase });
+      }
+      const candidate = candidates.sort((a, b) => b.increase - a.increase)[0];
       if (!candidate) break;
-      sizes[candidate.key] = sizes[candidate.key] === 'mini' ? 'small' : sizes[candidate.key] === 'small' ? 'medium' : 'large';
+      sizes[candidate.key] = candidate.next;
     }
     return sizes;
   }
@@ -683,6 +723,100 @@
     }
 
     return place(0) ? placements : null;
+  }
+
+  // 把 v2 固定槽位、v3 顺序数组和新的动态组件状态收敛到同一种结构。
+  // 纯函数不读写 LocalStorage，调用方可在确认迁移结果后自行持久化。
+  function migrateHomeWidgetLayout(state, defaults) {
+    const source = state && typeof state === 'object' ? state : {};
+    const fallback = defaults && typeof defaults === 'object' ? defaults : {};
+    const aliases = { clock: 'music', character: 'music', ...(fallback.aliases || {}) };
+    const defaultOrder = Array.isArray(fallback.order) ? fallback.order.map(String) : [];
+    const customIds = Array.isArray(fallback.customWidgetIds) ? fallback.customWidgetIds.map(String) : [];
+    const validIds = [...new Set([...defaultOrder, ...customIds])];
+    const validSet = new Set(validIds);
+    const mapId = (id) => aliases[String(id)] || String(id);
+    const requestedOrder = Array.isArray(source.order)
+      ? source.order
+      : Array.isArray(source.legacyOrder)
+        ? source.legacyOrder
+        : null;
+    let migratedOrder = requestedOrder ? requestedOrder.map(mapId) : [];
+
+    if (!migratedOrder.length && source.legacyLayout && typeof source.legacyLayout === 'object') {
+      const slots = Array.isArray(fallback.legacySlots)
+        ? fallback.legacySlots
+        : ['tall-left', 'small-top', 'medium-top', 'square-top', 'tall-right', 'wide-bottom'];
+      migratedOrder = Object.entries(source.legacyLayout)
+        .sort((left, right) => slots.indexOf(left[1]) - slots.indexOf(right[1]))
+        .map(([id]) => mapId(id));
+    }
+
+    const order = [];
+    [...migratedOrder, ...validIds].forEach((id) => {
+      if (validSet.has(id) && !order.includes(id)) order.push(id);
+    });
+
+    const allowedSizes = new Set(['mini', 'small', 'medium', 'large']);
+    const defaultSizes = fallback.sizeById && typeof fallback.sizeById === 'object'
+      ? fallback.sizeById
+      : {};
+    const sourceSizes = source.sizeById && typeof source.sizeById === 'object'
+      ? source.sizeById
+      : source.legacySizes && typeof source.legacySizes === 'object'
+        ? source.legacySizes
+        : {};
+    const sizeById = Object.fromEntries(order.map((id) => {
+      const requested = sourceSizes[id];
+      const fallbackSize = allowedSizes.has(defaultSizes[id]) ? defaultSizes[id] : 'small';
+      return [id, allowedSizes.has(requested) ? requested : fallbackSize];
+    }));
+
+    return { order, sizeById };
+  }
+
+  function moveHomeWidgetOrder(order, widgetId, direction, movableIds = null) {
+    const source = Array.isArray(order) ? [...order] : [];
+    const id = String(widgetId || '');
+    const currentIndex = source.indexOf(id);
+    if (currentIndex < 0 || !['previous', 'next'].includes(direction)) return source;
+    const movable = Array.isArray(movableIds) ? new Set(movableIds.map(String)) : null;
+    const step = direction === 'previous' ? -1 : 1;
+    let targetIndex = currentIndex + step;
+    while (targetIndex >= 0 && targetIndex < source.length) {
+      if (!movable || movable.has(source[targetIndex])) {
+        [source[currentIndex], source[targetIndex]] = [source[targetIndex], source[currentIndex]];
+        return source;
+      }
+      targetIndex += step;
+    }
+    return source;
+  }
+
+  function insertHomeWidgetAt(order, widgetId, index) {
+    const id = String(widgetId || '');
+    const source = (Array.isArray(order) ? order : []).map(String).filter((item) => item !== id);
+    if (!id) return source;
+    const target = Number.isInteger(index) ? Math.max(0, Math.min(source.length, index)) : source.length;
+    source.splice(target, 0, id);
+    return source;
+  }
+
+  function mergeWorkspaceStorage(currentStorage, targetStorage, forceReplace = false) {
+    const current = currentStorage && typeof currentStorage === 'object' && !Array.isArray(currentStorage)
+      ? currentStorage
+      : {};
+    const target = targetStorage && typeof targetStorage === 'object' && !Array.isArray(targetStorage)
+      ? targetStorage
+      : {};
+    const result = forceReplace
+      ? {}
+      : Object.fromEntries(Object.entries(current).filter(([, value]) => typeof value === 'string'));
+    Object.entries(target).forEach(([key, value]) => {
+      if (typeof value !== 'string') return;
+      if (forceReplace || !Object.prototype.hasOwnProperty.call(result, key)) result[key] = value;
+    });
+    return result;
   }
 
   function calculateAudioLevel(samples) {
@@ -778,6 +912,10 @@
     normalizeTodoCategoryNames,
     normalizeHomeWidgetSizes,
     packHomeWidgetLayout,
+    migrateHomeWidgetLayout,
+    moveHomeWidgetOrder,
+    insertHomeWidgetAt,
+    mergeWorkspaceStorage,
     calculateAudioLevel,
     resampleFloat32ToPcm16,
     shouldTogglePanelForSpace,

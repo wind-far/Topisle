@@ -7,7 +7,7 @@
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TO-DO Panel</title>
+    <title>Topisle</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -17,7 +17,7 @@
         class="notch"
         role="button"
         tabindex="0"
-        aria-label="展开 TO-DO Panel"
+        aria-label="展开 Topisle"
         aria-expanded="false"
         aria-controls="panel"
       >
@@ -99,6 +99,11 @@
         <div class="panels" id="panels">
           <section id="tab-home" class="tab-panel" role="tabpanel" aria-labelledby="tab-button-home" aria-hidden="true" inert>
             <div class="home-bento" id="home-bento" aria-label="可长按拖动调整的首页布局">
+              <button class="home-widget-manage" id="home-widget-manage" type="button" aria-label="管理首页自定义组件" title="管理首页组件">＋ 组件</button>
+              <div class="home-layout-hint" id="home-layout-hint" role="status" hidden>
+                <span>长按卡片可拖动，右上角按钮可切换尺寸</span>
+                <button id="home-layout-hint-close" type="button" aria-label="关闭首页布局提示">×</button>
+              </div>
               <!-- 本地汽水音乐控制 -->
               <section class="tile home-music" id="home-music" data-home-module="music" data-widget-size="medium" aria-label="汽水音乐播放器">
                 <canvas class="module-effect-canvas" id="music-color-bends" aria-hidden="true"></canvas>
@@ -402,7 +407,7 @@
           </section>
 
           <section id="tab-settings" class="tab-panel" role="tabpanel" aria-labelledby="tab-button-settings" aria-hidden="true" inert>
-            <div class="settings-page" id="settings-page" aria-label="TO-DO Panel 设置">
+            <div class="settings-page" id="settings-page" aria-label="Topisle 设置">
               <div class="settings-column settings-column-primary">
                 <section class="tile settings-card settings-api-card">
                   <div class="settings-card-heading">
@@ -429,6 +434,21 @@
                     <label><span><b>密钥</b><small>本机安全存储</small></span><input type="checkbox" data-settings-feature="credentials" aria-label="显示密钥" /><i aria-hidden="true"></i></label>
                     <label><span><b>剪贴板</b><small>默认关闭</small></span><input type="checkbox" data-settings-feature="clip" aria-label="显示剪贴板" /><i aria-hidden="true"></i></label>
                   </div>
+                </section>
+
+                <section class="tile settings-card settings-widgets-card" id="settings-widgets-card" aria-labelledby="settings-widgets-title">
+                  <div class="settings-card-heading">
+                    <div><span class="tile-label">首页</span><strong id="settings-widgets-title">自定义组件</strong></div>
+                    <div class="settings-widget-heading-actions">
+                      <small id="settings-widget-count" aria-live="polite">0 / 8</small>
+                      <button class="workspace-button compact" id="settings-widget-add" type="button">新增组件</button>
+                    </div>
+                  </div>
+                  <p class="settings-widget-help">最多 8 个；新增后首页会自动适配布局。组件内容只保存在本机。</p>
+                  <div class="settings-widget-list" id="settings-widget-list" role="list" aria-label="自定义组件列表">
+                    <div class="settings-widget-empty" id="settings-widget-empty" role="status">还没有自定义组件</div>
+                  </div>
+                  <p class="settings-widget-order-status" id="settings-widget-order-status" role="status" aria-live="polite"></p>
                 </section>
               </div>
 
@@ -459,7 +479,7 @@
                     </span>
                   </div>
                   <label class="settings-device-row settings-auto-launch-row">
-                    <div><span>开机自动启动</span><strong>登录后自动运行 TO-DO Panel</strong></div>
+                    <div><span>开机自动启动</span><strong>登录后自动运行 Topisle</strong></div>
                     <input id="settings-auto-launch" type="checkbox" aria-label="开机自动启动" />
                     <i aria-hidden="true"></i>
                   </label>
@@ -539,6 +559,102 @@
             </div>
           </section>
         </div>
+        <div class="widget-editor-backdrop" id="widget-editor-backdrop" hidden>
+          <section class="widget-editor-card" role="dialog" aria-modal="true" aria-labelledby="widget-editor-title" aria-describedby="widget-editor-description">
+            <form id="widget-editor-form" novalidate>
+              <div class="widget-editor-head">
+                <div>
+                  <strong id="widget-editor-title">新增组件</strong>
+                  <span id="widget-editor-description">选择一种安全的本地组件类型并填写内容</span>
+                </div>
+                <button id="widget-editor-close" type="button" aria-label="关闭组件编辑器">×</button>
+              </div>
+              <input id="widget-editor-id" type="hidden" />
+              <div class="widget-editor-fields-row">
+                <label class="widget-editor-field">
+                  <span>组件类型</span>
+                  <select id="widget-editor-type" required>
+                    <option value="text">文本卡片</option>
+                    <option value="countdown">倒计时</option>
+                    <option value="links">快捷链接</option>
+                    <option value="todayTodos">今日待办</option>
+                    <option value="recentNote">最近笔记</option>
+                    <option value="linkGroup">链接分组</option>
+                  </select>
+                </label>
+                <label class="widget-editor-field">
+                  <span>尺寸</span>
+                  <select id="widget-editor-size" required>
+                    <option value="mini">迷你</option>
+                    <option value="small">小</option>
+                    <option value="medium" selected>中</option>
+                    <option value="large">大</option>
+                  </select>
+                </label>
+              </div>
+              <label class="widget-editor-field">
+                <span>标题</span>
+                <input id="widget-editor-name" type="text" maxlength="48" placeholder="例如：项目上线" autocomplete="off" required />
+              </label>
+              <div class="widget-editor-config" id="widget-editor-text-fields" data-widget-fields="text">
+                <label class="widget-editor-field">
+                  <span>文本内容</span>
+                  <textarea id="widget-editor-content" maxlength="1000" rows="4" placeholder="记录需要常驻首页的信息" required></textarea>
+                </label>
+              </div>
+              <div class="widget-editor-config" id="widget-editor-countdown-fields" data-widget-fields="countdown" hidden>
+                <label class="widget-editor-field">
+                  <span>目标时间</span>
+                  <input id="widget-editor-target" type="datetime-local" required disabled />
+                </label>
+              </div>
+              <div class="widget-editor-config" id="widget-editor-link-fields" data-widget-fields="links" hidden>
+                <div class="widget-editor-links-heading">
+                  <span>链接列表 <small id="widget-editor-links-count">1 / 12</small></span>
+                  <button id="widget-editor-link-add" type="button" disabled>新增链接</button>
+                </div>
+                <div class="widget-editor-links-list" id="widget-editor-links-list" role="list" aria-label="快捷链接列表"></div>
+              </div>
+              <div class="widget-editor-config" id="widget-editor-today-todos-fields" data-widget-fields="todayTodos" hidden>
+                <label class="widget-editor-field">
+                  <span>展示数量</span>
+                  <input id="widget-editor-today-todos-limit" type="number" min="1" max="8" step="1" value="4" required disabled />
+                </label>
+                <label class="widget-editor-check">
+                  <input id="widget-editor-today-todos-overdue" type="checkbox" checked disabled />
+                  <span>包含已逾期且未完成的待办</span>
+                </label>
+              </div>
+              <div class="widget-editor-config" id="widget-editor-recent-note-fields" data-widget-fields="recentNote" hidden>
+                <label class="widget-editor-field">
+                  <span>笔记来源</span>
+                  <select id="widget-editor-recent-note-id" disabled>
+                    <option value="">最近一篇（自动更新）</option>
+                  </select>
+                </label>
+                <label class="widget-editor-check">
+                  <input id="widget-editor-recent-note-excerpt" type="checkbox" checked disabled />
+                  <span>显示正文摘要</span>
+                </label>
+              </div>
+              <div class="widget-editor-config" id="widget-editor-link-group-fields" data-widget-fields="linkGroup" hidden>
+                <label class="widget-editor-field">
+                  <span>链接分组</span>
+                  <select id="widget-editor-link-group-id" required disabled></select>
+                </label>
+                <label class="widget-editor-field">
+                  <span>展示数量</span>
+                  <input id="widget-editor-link-group-limit" type="number" min="1" max="8" step="1" value="6" required disabled />
+                </label>
+              </div>
+              <p class="widget-editor-note" id="widget-editor-note" role="status" aria-live="polite">不支持输入或执行 HTML、JavaScript。</p>
+              <div class="widget-editor-actions">
+                <button class="workspace-button compact" id="widget-editor-cancel" type="button">取消</button>
+                <button class="workspace-button compact primary" id="widget-editor-save" type="submit">保存组件</button>
+              </div>
+            </form>
+          </section>
+        </div>
         <div class="status-toast" id="status-toast" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true" hidden>
           <span id="status-toast-message"></span>
           <button id="status-toast-action" type="button" hidden>撤销</button>
@@ -546,6 +662,8 @@
       </div>
     </div>
     <script src="domain.js"></script>
+    <script src="widgets/registry.js"></script>
+    <script src="widgets/renderers.js"></script>
     <script src="effects.js"></script>
     <script src="app.js"></script>
     <script src="workspace.js"></script>

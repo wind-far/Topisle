@@ -1,8 +1,18 @@
 # 更新日志
 
-本文件记录 TO-DO Panel 的重要功能、修复与发布变更。尚未发布的改动统一进入「未发布」，创建新版本标签时再归档到对应版本。
+本文件记录 Topisle 的重要功能、修复与发布变更。尚未发布的改动统一进入「未发布」，创建新版本标签时再归档到对应版本。
 
 ## [未发布]
+
+### 桌面端
+
+- 品牌升级为 Topisle（顶屿），统一桌面应用、通知、安装包、官网与文档中的名称、图标和分享封面；继续沿用历史数据目录与应用标识，确保升级不丢失本机数据和系统授权。
+- 新增首页自定义组件，可在设置页创建文本、倒计时、快捷链接、今日待办、最近/指定笔记与链接分组卡片，并管理尺寸、显隐、编辑、键盘排序和删除撤销。
+- 首页布局升级为动态组件注册与 v4 数据结构，兼容已有排序和尺寸数据。
+- 收紧 Electron 本地窗口的导航、新窗口、WebView 与渲染沙箱安全边界。
+- 修复切换到已有数据文件夹时可能覆盖或混入当前工作区数据的问题。
+- 修复快捷链接组件编辑后丢失多链接、首页尺寸切换绕过类型约束的问题。
+- 通知窗口改用最小权限 preload，并为敏感 IPC 增加主窗口来源校验。
 
 ### 官网
 
@@ -34,7 +44,7 @@
 
 - 首个稳定版本，建立固定命名的 Apple Silicon DMG 发布流程。
 
-[未发布]: https://github.com/xiaopu-ai/TO-DO-Panel/compare/v1.0.2...HEAD
-[1.0.2]: https://github.com/xiaopu-ai/TO-DO-Panel/compare/v1.0.1...v1.0.2
-[1.0.1]: https://github.com/xiaopu-ai/TO-DO-Panel/compare/v1.0.0...v1.0.1
-[1.0.0]: https://github.com/xiaopu-ai/TO-DO-Panel/releases/tag/v1.0.0
+[未发布]: https://github.com/wind-far/Topisle/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/wind-far/Topisle/compare/v1.0.1...v1.0.2
+[1.0.1]: https://github.com/wind-far/Topisle/compare/v1.0.0...v1.0.1
+[1.0.0]: https://github.com/wind-far/Topisle/releases/tag/v1.0.0

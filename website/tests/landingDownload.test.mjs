@@ -10,21 +10,21 @@ test("latest release selection returns the installable Apple Silicon DMG", async
   const release = {
     assets: [
       {
-        name: "TO-DO-Panel-1.0.2-arm64.dmg.sha256",
+        name: "Topisle-1.0.2-arm64.dmg.sha256",
         content_type: "application/octet-stream",
         state: "uploaded",
         browser_download_url: "https://example.com/checksum",
       },
       {
-        name: "TO-DO-Panel-1.0.2-arm64.dmg",
+        name: "Topisle-1.0.2-arm64.dmg",
         content_type: "application/x-apple-diskimage",
         state: "uploaded",
-        browser_download_url: "https://example.com/TO-DO-Panel-1.0.2-arm64.dmg",
+        browser_download_url: "https://example.com/Topisle-1.0.2-arm64.dmg",
       },
     ],
   };
 
-  assert.equal(selectMacDownloadUrl(release), "https://example.com/TO-DO-Panel-1.0.2-arm64.dmg");
+  assert.equal(selectMacDownloadUrl(release), "https://example.com/Topisle-1.0.2-arm64.dmg");
 });
 
 test("latest release selection safely falls back when no DMG is published", async () => {

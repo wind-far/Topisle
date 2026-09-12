@@ -23,6 +23,10 @@ const {
   normalizeTodoCategoryNames,
   normalizeHomeWidgetSizes,
   packHomeWidgetLayout,
+  migrateHomeWidgetLayout,
+  mergeWorkspaceStorage,
+  moveHomeWidgetOrder,
+  insertHomeWidgetAt,
   calculateAudioLevel,
   normalizeHomeLayout,
   swapHomeLayoutSlots,
@@ -279,8 +283,8 @@ test('window labels disambiguate duplicate workspace names without losing their 
 test('multiple browser windows use page titles instead of generic app numbers', () => {
   assert.deepEqual(numberWindowLabels([
     { appName: 'Arc', id: 'a', title: '阿里云百炼控制台 — Arc' },
-    { appName: 'Arc', id: 'b', title: 'NotchTodo 设计稿 — Arc' },
-  ]).map((item) => item.displayName), ['阿里云百炼控制台', 'NotchTodo 设计稿']);
+    { appName: 'Arc', id: 'b', title: 'Topisle 设计稿 — Arc' },
+  ]).map((item) => item.displayName), ['阿里云百炼控制台', 'Topisle 设计稿']);
 });
 
 test('createTodo requires a valid DDL and preserves reminder metadata', () => {
@@ -473,10 +477,10 @@ test('editing a saved note updates content and timestamp without losing its iden
 
 test('note search matches titles and full content without changing archive order', () => {
   const notes = normalizeNoteArchive([
-    { id: 'one', title: 'TO-DO Panel 设计', titleSource: 'model', content: '正文没有产品英文名', createdAt: 100, updatedAt: 300 },
+    { id: 'one', title: 'Topisle 设计', titleSource: 'model', content: '正文没有产品英文名', createdAt: 100, updatedAt: 300 },
     { id: 'two', content: '会议备忘\n下周交付录制功能', createdAt: 200, updatedAt: 200 },
   ]);
-  assert.deepEqual(filterNotes(notes, 'to-do').map((note) => note.id), ['one']);
+  assert.deepEqual(filterNotes(notes, 'topisle').map((note) => note.id), ['one']);
   assert.deepEqual(filterNotes(notes, '录制').map((note) => note.id), ['two']);
   assert.deepEqual(filterNotes(notes, '').map((note) => note.id), ['one', 'two']);
 });
@@ -624,6 +628,296 @@ test('home widget packing fills all four rows even when logical order would frag
     }
   });
   assert.equal(occupied.size, 48);
+});
+
+test('dynamic home widget migration preserves saved order and appends new custom widgets', () => {
+  const result = migrateHomeWidgetLayout({
+    order: ['mirror', 'music', 'missing', 'custom-focus', 'mirror'],
+    sizeById: { mirror: 'large', music: 'huge', 'custom-focus': 'mini' },
+  }, {
+    order: ['music', 'mirror', 'note'],
+    sizeById: { music: 'medium', mirror: 'medium', note: 'large' },
+    customWidgetIds: ['custom-focus', 'custom-links'],
+  });
+  assert.deepEqual(result, {
+    order: ['mirror', 'music', 'custom-focus', 'note', 'custom-links'],
+    sizeById: {
+      mirror: 'large',
+      music: 'medium',
+      'custom-focus': 'mini',
+      note: 'large',
+      'custom-links': 'small',
+    },
+  });
+});
+
+test('dynamic home widget migration accepts fixed-slot legacy layout and historical aliases', () => {
+  const result = migrateHomeWidgetLayout({
+    legacyLayout: {
+      note: 'wide-bottom',
+      character: 'tall-left',
+      mirror: 'square-top',
+    },
+    legacySizes: { music: 'small', mirror: 'medium' },
+  }, {
+    order: ['music', 'mirror', 'note'],
+    sizeById: { music: 'medium', mirror: 'small', note: 'large' },
+  });
+  assert.deepEqual(result.order, ['music', 'mirror', 'note']);
+  assert.deepEqual(result.sizeById, { music: 'small', mirror: 'medium', note: 'large' });
+});
+
+test('custom widget registry accepts only normalized compile-time widget schemas', () => {
+  const registry = require('../renderer/widgets/registry');
+  assert.deepEqual(Object.keys(registry.WIDGET_TYPES), [
+    'text', 'countdown', 'links', 'todayTodos', 'recentNote', 'linkGroup',
+  ]);
+  const checked = registry.validateWidgetManifest({
+    schemaVersion: 2,
+    id: 'custom-reading',
+    type: 'links',
+    title: ' 阅读 ',
+    size: 'medium',
+    config: { items: [
+      { label: 'OpenAI', url: 'openai.com' },
+    ] },
+  });
+  assert.equal(checked.valid, true);
+  assert.deepEqual(checked.value.config.items, [{ label: 'OpenAI', url: 'https://openai.com/' }]);
+  assert.equal(registry.validateWidgetManifest({
+    id: 'custom-local', type: 'links', config: { items: [{ label: '本机', url: 'http://127.0.0.1:3000' }] },
+  }).valid, false);
+  assert.equal(registry.validateWidgetManifest({
+    id: 'custom-ipv6', type: 'links', config: { items: [{ label: '本机 IPv6', url: 'http://[fc00::1]/' }] },
+  }).valid, false);
+  assert.equal(registry.validateWidgetManifest({ id: 'custom-x', type: 'html', config: {} }).valid, false);
+  assert.equal(registry.validateWidgetManifest({
+    id: 'custom-timer', type: 'countdown', config: { targetTime: 'not-a-date' },
+  }).valid, false);
+});
+
+test('custom widget registry drops duplicate and malformed instances', () => {
+  const { normalizeWidgetInstances } = require('../renderer/widgets/registry');
+  const rows = normalizeWidgetInstances([
+    { id: 'custom-a', type: 'text', title: 'A', config: { body: '<script>alert(1)</script>' } },
+    { id: 'custom-a', type: 'text', title: '重复', config: { body: 'ignored' } },
+    { id: 'unsafe', type: 'text', config: { body: 'ignored' } },
+  ]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].config.body, '<script>alert(1)</script>');
+});
+
+test('custom widget facade creates, updates, removes, and lays out safe instances', () => {
+  const widgets = require('../renderer/widgets/registry');
+  const created = widgets.createInstance({
+    id: 'custom-status', type: 'text', title: '状态', config: { body: '正常' },
+  });
+  assert.equal(created.id, 'custom-status');
+  const updated = widgets.updateInstance([created], created.id, { title: '最新状态', config: { body: '完成' } });
+  assert.equal(updated[0].title, '最新状态');
+  assert.equal(updated[0].config.body, '完成');
+  assert.deepEqual(widgets.normalizeDynamicHomeLayout({ order: ['custom-status', 'music'] }, {
+    order: ['music'], sizeById: { music: 'medium' },
+  }, updated), {
+    order: ['custom-status', 'music'],
+    sizeById: { 'custom-status': 'small', music: 'medium' },
+  });
+  assert.deepEqual(widgets.removeInstance(updated, created.id), []);
+});
+
+test('home widget sizing respects each custom type allowed sizes while fitting capacity', () => {
+  const sizes = normalizeHomeWidgetSizes({
+    builtin: 'large',
+    'custom-text': 'large',
+    'custom-countdown': 'large',
+  }, {
+    builtin: 'large',
+    'custom-text': 'large',
+    'custom-countdown': 'medium',
+  }, 'builtin', 22, {
+    'custom-text': ['small', 'medium', 'large'],
+    'custom-countdown': ['mini', 'small', 'medium'],
+  });
+  assert.deepEqual(sizes, {
+    builtin: 'large',
+    'custom-text': 'small',
+    'custom-countdown': 'mini',
+  });
+});
+
+test('home widget sizing can safely reduce the preferred widget when every sibling reached its minimum', () => {
+  const defaults = {
+    music: 'mini', pomodoro: 'mini', windows: 'mini', recorder: 'mini',
+    mirror: 'mini', note: 'mini', commands: 'mini',
+    'custom-1': 'large', 'custom-2': 'small', 'custom-3': 'small', 'custom-4': 'small',
+    'custom-5': 'small', 'custom-6': 'small', 'custom-7': 'small', 'custom-8': 'small',
+  };
+  const textSizes = Object.fromEntries(
+    Object.keys(defaults).filter((id) => id.startsWith('custom-')).map((id) => [id, ['small', 'medium', 'large']])
+  );
+  const sizes = normalizeHomeWidgetSizes(defaults, defaults, 'custom-1', 48, textSizes);
+  const area = { mini: 2, small: 4, medium: 8, large: 16 };
+  assert.equal(Object.values(sizes).reduce((total, size) => total + area[size], 0), 48);
+  assert.equal(textSizes['custom-1'].includes(sizes['custom-1']), true);
+});
+
+test('widget facade delegates dynamic layout migration to the shared domain contract', () => {
+  const widgets = require('../renderer/widgets/registry');
+  const instances = [{
+    id: 'custom-focus', type: 'countdown', size: 'mini', enabled: true,
+    config: { targetTime: '2026-09-01T00:00:00.000Z' },
+  }];
+  const saved = { order: ['character', 'custom-focus'], sizeById: { music: 'medium' } };
+  const defaults = { order: ['music'], sizeById: { music: 'small' } };
+  assert.deepEqual(
+    widgets.normalizeDynamicHomeLayout(saved, defaults, instances),
+    migrateHomeWidgetLayout(saved, {
+      ...defaults,
+      customWidgetIds: ['custom-focus'],
+      sizeById: { music: 'small', 'custom-focus': 'mini' },
+    })
+  );
+});
+
+test('workspace target replacement drops every key from the previous workspace', () => {
+  assert.deepEqual(mergeWorkspaceStorage({
+    'notch-todo-data': 'old todos',
+    'only-in-old': 'must disappear',
+  }, {
+    'notch-todo-data': 'target todos',
+    'only-in-target': 'must remain',
+    malformed: 42,
+  }, true), {
+    'notch-todo-data': 'target todos',
+    'only-in-target': 'must remain',
+  });
+  assert.deepEqual(mergeWorkspaceStorage({ current: 'keep' }, { current: 'do not overwrite', added: 'yes' }), {
+    current: 'keep',
+    added: 'yes',
+  });
+});
+
+test('widget schema migration upgrades legacy instances and quarantines future versions', () => {
+  const widgets = require('../renderer/widgets/registry');
+  const legacy = {
+    id: 'custom-legacy', type: 'text', title: '旧组件', size: 'small', config: { body: '保留' },
+  };
+  const migrated = widgets.migrateWidgetInstance(legacy);
+  assert.equal(migrated.status, 'ready');
+  assert.equal(migrated.migrated, true);
+  assert.equal(migrated.value.schemaVersion, 2);
+  const versionOne = widgets.migrateWidgetInstance({ ...legacy, schemaVersion: 1 });
+  assert.equal(versionOne.status, 'ready');
+  assert.equal(versionOne.value.schemaVersion, 2);
+
+  const future = {
+    schemaVersion: 9,
+    id: 'custom-future',
+    type: 'future-type',
+    title: '新版组件',
+    config: { nested: { mustStay: true } },
+  };
+  const partition = widgets.partitionWidgetInstances([legacy, future]);
+  assert.deepEqual(partition.instances, [migrated.value]);
+  assert.deepEqual(partition.unsupported, [future]);
+  assert.equal(widgets.normalizeWidgetInstance(future), null);
+});
+
+test('dynamic layout retains hidden and future widget positions without rendering contracts', () => {
+  const widgets = require('../renderer/widgets/registry');
+  const saved = {
+    order: ['custom-hidden', 'music', 'custom-future'],
+    sizeById: { 'custom-hidden': 'small', music: 'medium', 'custom-future': 'large' },
+  };
+  const result = widgets.normalizeDynamicHomeLayout(saved, {
+    order: ['music'], sizeById: { music: 'medium' },
+  }, [
+    { schemaVersion: 2, id: 'custom-hidden', type: 'text', enabled: false, size: 'small', config: { body: 'H' } },
+    { schemaVersion: 3, id: 'custom-future', type: 'future', size: 'large', config: { future: true } },
+  ]);
+  assert.deepEqual(result.order, ['custom-hidden', 'music', 'custom-future']);
+  assert.deepEqual(result.sizeById, { 'custom-hidden': 'small', music: 'medium', 'custom-future': 'large' });
+});
+
+test('local data widget manifests store references and bounded display options only', () => {
+  const widgets = require('../renderer/widgets/registry');
+  const todos = widgets.validateWidgetManifest({
+    id: 'custom-today', type: 'todayTodos', config: { limit: 8, includeOverdue: false },
+  });
+  assert.equal(todos.valid, true);
+  assert.deepEqual(todos.value.config, { limit: 8, includeOverdue: false });
+
+  const note = widgets.validateWidgetManifest({
+    id: 'custom-note-ref', type: 'recentNote', config: { noteId: 'note-7', showExcerpt: false },
+  });
+  assert.equal(note.valid, true);
+  assert.deepEqual(note.value.config, { noteId: 'note-7', showExcerpt: false });
+
+  const links = widgets.validateWidgetManifest({
+    id: 'custom-group-ref', type: 'linkGroup', config: { groupId: 'group-2', limit: 3 },
+  });
+  assert.equal(links.valid, true);
+  assert.deepEqual(links.value.config, { groupId: 'group-2', limit: 3 });
+  assert.equal(widgets.validateWidgetManifest({
+    id: 'custom-group-invalid', type: 'linkGroup', config: { groupId: '', limit: 9 },
+  }).valid, false);
+});
+
+test('today todo reference resolves only unfinished overdue and current-day rows', () => {
+  const widgets = require('../renderer/widgets/registry');
+  const widget = widgets.createInstance({
+    id: 'custom-today', type: 'todayTodos', config: { limit: 2, includeOverdue: true },
+  });
+  const result = widgets.resolveWidgetData(widget, {
+    todos: {
+      P0: [
+        { id: 'overdue', text: '逾期任务', deadline: '2026-08-29T12:00:00.000Z' },
+        { id: 'today', text: '今日任务', deadline: '2026-08-30T12:00:00.000Z' },
+        { id: 'done', text: '已完成', deadline: '2026-08-30T13:00:00.000Z', done: true },
+      ],
+      P1: [{ id: 'future', text: '明天任务', deadline: '2026-08-31T12:00:00.000Z' }],
+    },
+  }, { now: Date.parse('2026-08-30T08:00:00.000Z') });
+  assert.equal(result.status, 'ready');
+  assert.deepEqual(result.items.map((item) => item.id), ['overdue', 'today']);
+  assert.deepEqual(result.items.map((item) => item.overdue), [true, false]);
+});
+
+test('note and link-group references resolve current data and fail closed when targets disappear', () => {
+  const widgets = require('../renderer/widgets/registry');
+  const noteWidget = widgets.createInstance({
+    id: 'custom-note-ref', type: 'recentNote', config: { noteId: 'chosen', showExcerpt: true },
+  });
+  const noteResult = widgets.resolveWidgetData(noteWidget, { notes: [
+    { id: 'newest', title: '更新', content: 'later', createdAt: 20, updatedAt: 20 },
+    { id: 'chosen', title: ' 指定笔记 ', content: '**只保存引用**', createdAt: 10, updatedAt: 10 },
+  ] });
+  assert.equal(noteResult.note.id, 'chosen');
+  assert.equal(noteResult.note.excerpt, '只保存引用');
+  assert.equal(widgets.resolveWidgetData(noteWidget, { notes: [] }).status, 'empty');
+
+  const groupWidget = widgets.createInstance({
+    id: 'custom-group-ref', type: 'linkGroup', config: { groupId: 'group-a', limit: 2 },
+  });
+  const groupResult = widgets.resolveWidgetData(groupWidget, { linkGroups: [{
+    id: 'group-a', name: '资料', links: [
+      { id: 'public', title: 'OpenAI', url: 'https://openai.com' },
+      { id: 'private', title: 'Local', url: 'http://127.0.0.1' },
+    ],
+  }] });
+  assert.deepEqual(groupResult.items, [{ id: 'public', label: 'OpenAI', url: 'https://openai.com/' }]);
+  assert.equal(widgets.resolveWidgetData(groupWidget, { linkGroups: [] }).status, 'empty');
+});
+
+test('home widget order supports keyboard movement within an allowed subset and exact undo insertion', () => {
+  const order = ['music', 'custom-a', 'mirror', 'custom-hidden', 'custom-b'];
+  assert.deepEqual(moveHomeWidgetOrder(order, 'custom-b', 'previous', [
+    'custom-a', 'custom-hidden', 'custom-b',
+  ]), ['music', 'custom-a', 'mirror', 'custom-b', 'custom-hidden']);
+  assert.deepEqual(moveHomeWidgetOrder(order, 'music', 'previous'), order);
+  assert.deepEqual(moveHomeWidgetOrder(order, 'custom-a', 'invalid'), order);
+  assert.deepEqual(insertHomeWidgetAt(['music', 'mirror'], 'custom-a', 1), ['music', 'custom-a', 'mirror']);
+  assert.deepEqual(insertHomeWidgetAt(['custom-a', 'music'], 'custom-a', 99), ['music', 'custom-a']);
 });
 
 test('audio level returns stable RMS volume for recording strands', () => {

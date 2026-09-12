@@ -1,5 +1,156 @@
 const net = require('net');
 const path = require('path');
+const fs = require('fs');
+const { pathToFileURL } = require('url');
+
+function isAllowedLocalEntryNavigation(targetUrl, entryFilePath) {
+  if (typeof entryFilePath !== 'string' || !path.isAbsolute(entryFilePath)) return false;
+  let target;
+  try {
+    target = new URL(String(targetUrl || ''));
+  } catch (error) {
+    return false;
+  }
+  if (target.protocol !== 'file:' || target.username || target.password || target.search || target.hash) return false;
+  return target.toString() === pathToFileURL(path.resolve(entryFilePath)).toString();
+}
+
+function lockDownLocalWebContents(webContents, entryFilePath) {
+  if (!webContents || typeof webContents.on !== 'function') return false;
+  webContents.setWindowOpenHandler?.(() => ({ action: 'deny' }));
+  webContents.on('will-navigate', (event, legacyUrl) => {
+    const targetUrl = event && event.url || legacyUrl;
+    if (!isAllowedLocalEntryNavigation(targetUrl, entryFilePath)) event.preventDefault();
+  });
+  webContents.on('will-attach-webview', (event) => event.preventDefault());
+  return true;
+}
+
+function validateWorkspaceEnvelope(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, error: 'invalid_workspace_envelope' };
+  }
+  if (value.version !== 1) return { ok: false, error: 'unsupported_workspace_version' };
+  const storage = value.localStorage;
+  if (!storage || typeof storage !== 'object' || Array.isArray(storage)) {
+    return { ok: false, error: 'invalid_workspace_storage' };
+  }
+  if (Object.values(storage).some((item) => typeof item !== 'string')) {
+    return { ok: false, error: 'invalid_workspace_storage' };
+  }
+  return {
+    ok: true,
+    value: {
+      version: 1,
+      ...(Number.isFinite(value.updatedAt) ? { updatedAt: value.updatedAt } : {}),
+      localStorage: { ...storage },
+    },
+  };
+}
+
+function inspectWorkspaceTarget(targetRoot, workspaceFilename = 'workspace.json', fsApi = fs) {
+  if (typeof targetRoot !== 'string' || !path.isAbsolute(targetRoot)) {
+    return { ok: false, error: 'invalid_workspace_path' };
+  }
+  const workspaceFile = path.join(targetRoot, workspaceFilename);
+  let stat;
+  try {
+    stat = fsApi.lstatSync(workspaceFile);
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return { ok: true, kind: 'empty', workspaceFile };
+    return { ok: false, error: 'workspace_unreadable', workspaceFile };
+  }
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    return { ok: false, error: 'invalid_workspace_file', workspaceFile };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(fsApi.readFileSync(workspaceFile, 'utf8'));
+  } catch (error) {
+    return { ok: false, error: 'invalid_workspace_json', workspaceFile };
+  }
+  const validated = validateWorkspaceEnvelope(parsed);
+  if (!validated.ok) return { ...validated, workspaceFile };
+  return { ok: true, kind: 'existing', workspaceFile, envelope: validated.value };
+}
+
+function copyWorkspaceAssets(sourceRoot, targetRoot, options = {}, fsApi = fs) {
+  if (!sourceRoot || !targetRoot || path.resolve(sourceRoot) === path.resolve(targetRoot)) return true;
+  const directories = Array.isArray(options.directories) ? options.directories : [];
+  const files = Array.isArray(options.files) ? options.files : [];
+  try {
+    for (const directory of directories) {
+      const source = path.join(sourceRoot, directory);
+      const target = path.join(targetRoot, directory);
+      if (!fsApi.existsSync(source) || !fsApi.lstatSync(source).isDirectory()) continue;
+      fsApi.mkdirSync(target, { recursive: true });
+      fsApi.cpSync(source, target, { recursive: true, force: false, errorOnExist: false });
+    }
+    for (const filename of files) {
+      const source = path.join(sourceRoot, filename);
+      const target = path.join(targetRoot, filename);
+      if (fsApi.existsSync(source) && fsApi.lstatSync(source).isFile() && !fsApi.existsSync(target)) {
+        fsApi.mkdirSync(path.dirname(target), { recursive: true });
+        fsApi.copyFileSync(source, target, fsApi.constants.COPYFILE_EXCL);
+      }
+    }
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function workspacePathsMatch(expectedPath, currentPath) {
+  return typeof expectedPath === 'string'
+    && typeof currentPath === 'string'
+    && path.isAbsolute(expectedPath)
+    && path.isAbsolute(currentPath)
+    && path.resolve(expectedPath) === path.resolve(currentPath);
+}
+
+function writeWorkspaceEnvelope(expectedPath, currentPath, envelope, workspaceFilename = 'workspace.json', fsApi = fs) {
+  if (!workspacePathsMatch(expectedPath, currentPath)) return false;
+  const validated = validateWorkspaceEnvelope(envelope);
+  if (!validated.ok) return false;
+  const workspaceFile = path.join(currentPath, workspaceFilename);
+  const temporaryFile = `${workspaceFile}.${process.pid}.tmp`;
+  try {
+    fsApi.mkdirSync(path.dirname(workspaceFile), { recursive: true });
+    fsApi.writeFileSync(temporaryFile, JSON.stringify(validated.value, null, 2), { mode: 0o600 });
+    fsApi.renameSync(temporaryFile, workspaceFile);
+    return true;
+  } catch (error) {
+    try { fsApi.unlinkSync(temporaryFile); } catch (unlinkError) {}
+    return false;
+  }
+}
+
+function saveWorkspaceSnapshot(expectedPath, currentPath, storage, options = {}, fsApi = fs) {
+  if (!workspacePathsMatch(expectedPath, currentPath)) {
+    return { ok: false, error: 'stale_workspace_path' };
+  }
+  const inspected = inspectWorkspaceTarget(currentPath, options.workspaceFilename || 'workspace.json', fsApi);
+  if (!inspected.ok) return { ok: false, error: inspected.error };
+  const envelope = validateWorkspaceEnvelope({
+    version: 1,
+    updatedAt: Number.isFinite(options.updatedAt) ? options.updatedAt : Date.now(),
+    localStorage: storage,
+  });
+  if (!envelope.ok) return { ok: false, error: envelope.error };
+  const serialized = JSON.stringify(envelope.value.localStorage);
+  const maxBytes = Number.isFinite(options.maxBytes) ? options.maxBytes : 8 * 1024 * 1024;
+  if (Buffer.byteLength(serialized) > maxBytes) return { ok: false, error: 'workspace_too_large' };
+  const written = writeWorkspaceEnvelope(
+    expectedPath,
+    currentPath,
+    envelope.value,
+    options.workspaceFilename || 'workspace.json',
+    fsApi
+  );
+  return written
+    ? { ok: true, kind: inspected.kind }
+    : { ok: false, error: 'workspace_write_failed' };
+}
 
 function isPrivateAddress(address) {
   const value = String(address || '').trim().toLowerCase().split('%', 1)[0];
@@ -334,6 +485,14 @@ async function controlSodaMusic(action, dependencies = {}, currentPlaying = fals
 }
 
 module.exports = {
+  isAllowedLocalEntryNavigation,
+  lockDownLocalWebContents,
+  validateWorkspaceEnvelope,
+  inspectWorkspaceTarget,
+  copyWorkspaceAssets,
+  workspacePathsMatch,
+  writeWorkspaceEnvelope,
+  saveWorkspaceSnapshot,
   isPrivateAddress,
   decodeHtmlEntities,
   extractPageTitle,

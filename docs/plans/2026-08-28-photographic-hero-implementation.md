@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Replace the current left-copy/right-image Hero with the approved full-screen photographic Mac composition, real expanded/collapsed TO-DO Panel interaction, and staged entrance animation.
+**Goal:** Replace the current left-copy/right-image Hero with the approved full-screen photographic Mac composition, real expanded/collapsed Topisle interaction, and staged entrance animation.
 
 **Architecture:** Keep the existing React/Vinext landing page and replace only `HeroSection`. Render every visual layer inside a normalized `1200 × 831` artboard so the photograph, screen wallpaper, product panel, and foreground mask share one coordinate system. Product UI remains file-backed real screenshots; a small pure state module controls when the panel may toggle.
 
@@ -83,7 +83,7 @@ Verify dimensions, crop boundaries, screen aperture, and absence of private desk
 Build the normalized artboard with this exact z-order:
 
 1. scene photograph;
-2. `TO-DO PANEL` wordmark;
+2. `TOPISLE` wordmark;
 3. clipped wallpaper;
 4. real expanded/collapsed panel control;
 5. scene photograph repeated through the foreground mask;

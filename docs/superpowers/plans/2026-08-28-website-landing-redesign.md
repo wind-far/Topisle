@@ -1,8 +1,8 @@
-# TO-DO Panel Website Landing Redesign Implementation Plan
+# Topisle Website Landing Redesign Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Rebuild the TO-DO Panel marketing site as the approved dark 3D landing page with a magnetic real-product hero, operation marquee, six sticky Tab cards, local-first section, and minimal ending.
+**Goal:** Rebuild the Topisle marketing site as the approved dark 3D landing page with a magnetic real-product hero, operation marquee, six sticky Tab cards, local-first section, and minimal ending.
 
 **Architecture:** Keep the Vinext/React application and native CSS. Split page composition, motion math, media fallback, and section content into focused modules; keep all product imagery as file-backed real captures and render a neutral non-UI fallback when captures are absent.
 
