@@ -20,9 +20,9 @@
   </p>
 </div>
 
-![Topisle 首页](docs/screenshots/home.png)
+![Topisle 首页，展示镜子通用封面、当前窗口、快速录音、随笔记和自定义倒计时组件](docs/screenshots/home.png)
 
-![Topisle 待办](docs/screenshots/todo.png)
+![Topisle 待办页，展示四个可改名工作流、完成状态和截止时间](docs/screenshots/todo.png)
 
 ## 它是什么
 
